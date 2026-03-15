@@ -105,6 +105,12 @@ initial begin
 	#10 keccak_init = 1;
 	#20 keccak_init = 0;
 	d = 256'h 2D7F7336_9973CD2D_0348B1CC_251AD82F_DD1A6BDB_E4106D0C_AA9476B0_A035997C;
+
+	// Set squeeze/ena early so ofifo_ena_r2 is 1 while keccak_squeeze is still 1 (during absorb/pad).
+	keccak_ctr = 3'h1;
+	ofifo_ena  = 1'b1;
+	repeat(2) @(posedge clk);
+
 	// Phase 3: Feed input data
 	for (i = 0; i < 8; i = i + 1) begin
     	ififo_wen    = 1'b1;		//separated control signal
@@ -123,12 +129,8 @@ initial begin
 	@(posedge clk);
 	wait(keccak_ready ==  1'b1);
 	@(posedge clk);
-	// Phase 5: Enable output and read
-	// TODO
-	keccak_ctr = 3'h1; //squeeze
-	ofifo_ena = 1'b1;
-	@(posedge clk);
-
+	// Phase 5: Raw hash is on keccak_dout (ofifo0 may stay empty: keccak_squeeze=0 after ready in unmodified server)
+	$display("keccak_ready seen. keccak_dout = %h", keccak_dout);
 	repeat(32) @(posedge clk);
 
 	for (read_count = 0; read_count < 64 && !ofifo0_empty; read_count = read_count + 1) begin
