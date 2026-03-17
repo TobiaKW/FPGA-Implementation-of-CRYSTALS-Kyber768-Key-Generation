@@ -1,6 +1,6 @@
-## Project: CENG3430 Rapid Prototyping of Digital Systems
+### FPGA Accelerated CRYSTALS Kyber768 Crytographic System
 
-This folder contains the Kyber-related prototype for the course **CENG3430 Rapid Prototyping of Digital Systems**.
+Course Project for CENG3430 @CUHK, Spring 2026.
 
 ### Source attribution
 
@@ -13,5 +13,5 @@ This folder contains the Kyber-related prototype for the course **CENG3430 Rapid
 
 ### Academic use only
 
-This project is for **academic purposes only** (coursework for CENG3430 Rapid Prototyping of Digital Systems).  
+This project is for **academic purposes only**.
 It is not intended for commercial use or redistribution beyond an educational context.
