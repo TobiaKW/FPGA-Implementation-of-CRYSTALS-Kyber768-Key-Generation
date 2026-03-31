@@ -125,13 +125,13 @@ initial begin
     read_a = 1'b1;
     @(posedge clk);
     read_a = 1'b0;
-    @(posedge clk);
+    repeat (3) @(posedge clk);
 
     for (k = 0; k < 256; k = k + 1) begin
-    @(posedge clk);
-    $display("dout=%0d", dout);
-    poly_out[k] = dout[11:0];
-end
+        $display("dout=%0d", dout);
+        poly_out[k] = dout[11:0];
+        @(posedge clk);
+    end
     $finish;
 end
 
