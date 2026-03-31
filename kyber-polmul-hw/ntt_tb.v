@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module ntt_top_tb;
+module ntt_top_tb();
 
 parameter PE_NUMBER = 1; //number of butterfly operations that can be performed in parallel
 
@@ -29,7 +29,7 @@ task init_poly_all_ones;
 endtask
 
 // DUT instantiation
-KyberHPM1PE_top #(.PE_NUMBER(PE_NUMBER)) DUT (
+KyberHPM1PE_top #(.PE_NUMBER(1)) DUT (
     .clk        (clk),
     .reset      (reset),
     .load_a_f   (load_a_f),
@@ -64,11 +64,12 @@ initial begin
     din        = 0;
 
     // Reset sequence
-    #20;
-    reset = 1'b1;
-    #20;
-    reset = 1'b0;
-    #20;
+    @(posedge clk);
+//    reset = 1'b1;
+//    wait(10);
+//    @(posedge clk);
+//    reset = 1'b0;
+    @(posedge clk);
 
     // Initialize test polynomial
     init_poly_all_ones();
