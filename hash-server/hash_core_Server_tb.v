@@ -47,6 +47,7 @@ wire decode_valid_mon;           // From decoder
 reg [255:0] d;
 integer i, read_count;
 integer phase_delay;
+integer decode_valid_count, ofifo8_wen_count, ofifo0_wen_count;
 
 // Clock generation: 100MHz (10ns period)
 always #5 clk = ~clk;
@@ -59,6 +60,32 @@ initial begin
 		if($time > 1000 && $time < 5000) begin
 			$display("[T=%0t] keccak_ready=%b, squeeze_ctr=%d, keccak_squeeze=%b, ofifo_ena=%b, keccak_ctr=%h, ofifo0_empty=%b, ofifo_full=%b",
 				$time, keccak_ready, squeeze_ctr, DUT.keccak_squeeze, ofifo_ena, keccak_ctr, ofifo0_empty, DUT.ofifo_full);
+		end
+	end
+end
+
+// Trace internal write path to prove where bottleneck is:
+// Keccak -> fifo8(ofifo_wen) -> decode_valid -> ofifo0_wen
+always @(posedge clk) begin
+	if (rst) begin
+		decode_valid_count <= 0;
+		ofifo8_wen_count <= 0;
+		ofifo0_wen_count <= 0;
+	end else begin
+		if (DUT.ofifo_wen) begin
+			ofifo8_wen_count <= ofifo8_wen_count + 1;
+			if (ofifo8_wen_count < 12)
+				$display("[fifo8_wen %0d] keccak_dout=%h squeeze=%b ctr=%0d", ofifo8_wen_count, keccak_dout, keccak_squeeze, squeeze_ctr);
+		end
+		if (DUT.decode_valid) begin
+			decode_valid_count <= decode_valid_count + 1;
+			if (decode_valid_count < 12)
+				$display("[decode %0d] decode_dout=%h v0=%b v1=%b parity=%b", decode_valid_count, DUT.decode_dout, DUT.ofifo_din_valid0, DUT.ofifo_din_valid1, DUT.fifo_data_parity);
+		end
+		if (DUT.ofifo0_wen) begin
+			ofifo0_wen_count <= ofifo0_wen_count + 1;
+			if (ofifo0_wen_count < 12)
+				$display("[ofifo0_wen %0d] ofifo0_din=%h", ofifo0_wen_count, DUT.ofifo0_din);
 		end
 	end
 end
@@ -115,6 +142,9 @@ initial begin
 	ofifo_ena = 0;
 	ofifo0_req = 0;
 	ofifo1_req = 0;
+	decode_valid_count = 0;
+	ofifo8_wen_count = 0;
+	ofifo0_wen_count = 0;
 
 	// Phase 1: Reset & clk
 	// TODO
@@ -161,18 +191,24 @@ initial begin
 	keccak_ctr = 3'h1;  // Stay in squeeze phase
 	ofifo_ena  = 1'b1;  // Keep output enabled
 	
-	// Wait for output FIFO to populate (give decoder time to process)
-	repeat(50) @(posedge clk);
+	// Wait until output path shows writes, or timeout
+	for (phase_delay = 0; phase_delay < 300; phase_delay = phase_delay + 1) begin
+		@(posedge clk);
+		if (ofifo0_wen_count > 0)
+			phase_delay = 300;
+	end
+	$display("Path counters: fifo8_wen=%0d, decode_valid=%0d, ofifo0_wen=%0d", ofifo8_wen_count, decode_valid_count, ofifo0_wen_count);
 	
 	// Attempt to read from ofifo0 (24-bit output for standard mode)
 	$display("\nAttempting to read ofifo0 (24-bit standard mode output):");
 	read_count = 0;
 	while(read_count < 64 && !ofifo0_empty) begin
+		// Sync FIFO read for simulation: pulse rd_en, then sample dout one cycle later
 		ofifo0_req = 1'b1;
 		@(posedge clk);
-		$display("  ofifo0[%0d] = %h (empty=%b, full=%b)", read_count, ofifo0_dout, ofifo0_empty, ofifo0_full);
 		ofifo0_req = 1'b0;
 		@(posedge clk);
+		$display("  ofifo0[%0d] = %h (empty=%b, full=%b)", read_count, ofifo0_dout, ofifo0_empty, ofifo0_full);
 		read_count = read_count + 1;
 	end
 	
@@ -201,9 +237,9 @@ initial begin
 		while(read_count < 64 && !ofifo1_empty) begin
 			ofifo1_req = 1'b1;
 			@(posedge clk);
-			$display("  ofifo1[%0d] = %h (empty=%b, full=%b)", read_count, ofifo1_dout, ofifo1_empty, ofifo1_full);
 			ofifo1_req = 1'b0;
 			@(posedge clk);
+			$display("  ofifo1[%0d] = %h (empty=%b, full=%b)", read_count, ofifo1_dout, ofifo1_empty, ofifo1_full);
 			read_count = read_count + 1;
 		end
 	end
