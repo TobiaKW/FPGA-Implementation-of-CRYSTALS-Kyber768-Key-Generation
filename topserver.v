@@ -19,7 +19,7 @@ module topserver(
 //TODO
 //Treat seed_a as rho (public matrix seed, 32 bytes).
 //For each matrix element A[i][j]:
-//absorb rho || j || i (note the order used in Kyber ref; usually column/row bytes)
+// absorb rho || col_idx || row_idx (note the order used in Kyber ref; usually column/row bytes)
 //squeeze bytes from SHAKE128
 //parse into 12-bit candidates
 //keep values < q (q=3329) via rejection sampling
@@ -37,7 +37,9 @@ localparam ST_DONE       = 3'd5;
 
 
 reg [2:0] state;
-reg [3:0] absorb_word_ctr; // 0..8
+reg [3:0] absorb_word_ctr; // 0..8 (8 seed words + 1 index word)
+reg [7:0] row_ctr;
+reg [7:0] col_ctr;
 
 // hash_core_Server controls
 reg        keccak_init;
@@ -105,6 +107,8 @@ always @(posedge clk) begin
     if (rst) begin 
         state <= ST_IDLE;
         absorb_word_ctr <= 4'd0;
+        mat_row <= 2'd0;
+        mat_col <= 2'd0;
         keygen_done <= 1'b0;
         busy <= 1'b0;
         a_coeff <= 12'd0;
@@ -141,6 +145,8 @@ always @(posedge clk) begin
                 busy <= 1'b0;
                 ofifo_ena <= 1'b0;
                 absorb_word_ctr <= 4'd0;
+                row_ctr <= 8'd0;
+                col_ctr <= 8'd0;
                 if (keygen_start) begin
                     //signal detected, init keccak core and change state to ABSORB
                     busy <= 1'b1;
@@ -150,26 +156,34 @@ always @(posedge clk) begin
             end
 
             ST_ABSORB: begin
-                // feed rho words (8x32-bit) into hash core
-                for (absorb_word_ctr = 0; absorb_word_ctr < 8; absorb_word_ctr = absorb_word_ctr + 1) begin
-    	            ififo_wen    = 1'b1;		//separated control signal
-		            ififo_mode   = 2'b00;  		//bit35:34
-    	            ififo_absorb = 1'b0;           //bit33
-                    ififo_last   = (absorb_word_ctr == 7);       //bit32, high when last word in the blk
-                    ififo_din    = seed_a[32*absorb_word_ctr +: 32];  //bit 31:0
-                    @(posedge clk);
-                end	
+                // feed one word per clock into input FIFO:
+                // 8 seed words + 1 selector word {col,row}
+                ififo_wen <= 1'b1;
+                if (absorb_word_ctr < 4'd8) begin
+                    ififo_din <= seed_a[absorb_word_ctr*32 +: 32];
+                end else begin
+                    ififo_din <= {16'h0000, col_ctr, row_ctr};//16+8+8
+                    ififo_last <= 1'b1;
+                end
 
-                ififo_wen = 1'b0;//disable input
-                state <= ST_WAIT_READY;
+                if (absorb_word_ctr == 4'd8) begin
+                    state <= ST_WAIT_READY;
+                end else begin
+                    absorb_word_ctr <= absorb_word_ctr + 4'd1;
+                end
             end
 
             ST_WAIT_READY: begin
-
+                if (keccak_ready) begin
+                    state <= ST_READ_REQ;
+                end
             end
 
             ST_READ_REQ: begin
-
+                ofifo0_req <= 1'b1;
+                if (ofifo0_empty) begin
+                    state <= ST_CAPTURE;
+                end
             end
 
             ST_CAPTURE: begin

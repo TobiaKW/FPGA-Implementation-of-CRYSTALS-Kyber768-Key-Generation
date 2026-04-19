@@ -131,11 +131,62 @@ initial begin
 	wait(keccak_ready ==  1'b1);
 	@(posedge clk);
 
-	// Phase 5: Raw hash is on keccak_dout
+	// Phase 5: Monitor output path and read ofifo0
 	$display("keccak_ready seen. keccak_dout = %h", keccak_dout);
-	// Add extra cycles to observe fifo8 -> decode_keccak -> ofifo0 pipeline
-	repeat(256) @(posedge clk);
-	$display("Phase 5 done.");
+	
+	// Keep keccak_ctr and ofifo_ena active to allow output path to work
+	// The squeeze phase output needs keccak_ctr in {1,2,5,6} and ofifo_ena=1
+	keccak_ctr = 3'h1;  // Stay in squeeze phase
+	ofifo_ena  = 1'b1;  // Keep output enabled
+	
+	// Wait for output FIFO to populate (give decoder time to process)
+	repeat(50) @(posedge clk);
+	
+	// Attempt to read from ofifo0 (24-bit output for standard mode)
+	$display("\nAttempting to read ofifo0 (24-bit standard mode output):");
+	read_count = 0;
+	while(read_count < 64 && !ofifo0_empty) begin
+		ofifo0_req = 1'b1;
+		@(posedge clk);
+		$display("  ofifo0[%0d] = %h (empty=%b, full=%b)", read_count, ofifo0_dout, ofifo0_empty, ofifo0_full);
+		ofifo0_req = 1'b0;
+		@(posedge clk);
+		read_count = read_count + 1;
+	end
+	
+	if(read_count == 0) begin
+		$display("  WARNING: ofifo0 is empty! Checking internal signals...");
+		$display("    ofifo_wen=%b, ofifo_full=%b, ofifo_empty=%b", ofifo_full, ofifo_empty);
+		$display("    keccak_squeeze=%b (should be high during squeeze)", keccak_squeeze);
+		
+		// Try to monitor the internal FIFO state during continued operation
+		$display("\nWaiting for internal fifo8 to populate (monitoring keccak_dout)...");
+		for(i = 0; i < 100; i = i + 1) begin
+			if(!ofifo_empty) begin
+				$display("  FIFO8 got data at cycle %0d, keccak_dout = %h", i, keccak_dout);
+				break;
+			end
+			@(posedge clk);
+		end
+	end else begin
+		$display("Successfully read %0d words from ofifo0", read_count);
+	end
+	
+	// Also try ofifo1 (25-bit output for pattern/eta3 modes)
+	if(ofifo0_empty) begin
+		$display("\nAttempting to read ofifo1 (25-bit pattern/eta3 output):");
+		read_count = 0;
+		while(read_count < 64 && !ofifo1_empty) begin
+			ofifo1_req = 1'b1;
+			@(posedge clk);
+			$display("  ofifo1[%0d] = %h (empty=%b, full=%b)", read_count, ofifo1_dout, ofifo1_empty, ofifo1_full);
+			ofifo1_req = 1'b0;
+			@(posedge clk);
+			read_count = read_count + 1;
+		end
+	end
+	
+	$display("\nPhase 5 done.");
 	$finish;
 end
 
