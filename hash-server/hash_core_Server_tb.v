@@ -58,7 +58,7 @@ initial begin
 		repeat(50) @(posedge clk);
 		if($time > 1000 && $time < 5000) begin
 			$display("[T=%0t] keccak_ready=%b, squeeze_ctr=%d, keccak_squeeze=%b, ofifo_ena=%b, keccak_ctr=%h, ofifo0_empty=%b, ofifo_full=%b",
-				$time, keccak_ready, squeeze_ctr, DUT.keccak_squeeze, ofifo_ena, keccak_ctr, ofifo0_empty, ofifo_full);
+				$time, keccak_ready, squeeze_ctr, DUT.keccak_squeeze, ofifo_ena, keccak_ctr, ofifo0_empty, DUT.ofifo_full);
 		end
 	end
 end
@@ -178,17 +178,17 @@ initial begin
 	
 	if(read_count == 0) begin
 		$display("  WARNING: ofifo0 is empty! Checking internal signals...");
-		$display("    ofifo_wen=%b, ofifo_full=%b, ofifo_empty=%b", ofifo_full, ofifo_empty);
+		$display("    ofifo_wen=%b, ofifo_full=%b, ofifo_empty=%b", DUT.ofifo_wen, DUT.ofifo_full, DUT.ofifo_empty);
 		$display("    keccak_squeeze=%b (should be high during squeeze)", keccak_squeeze);
 		
 		// Try to monitor the internal FIFO state during continued operation
 		$display("\nWaiting for internal fifo8 to populate (monitoring keccak_dout)...");
 		for(i = 0; i < 100; i = i + 1) begin
-			if(!ofifo_empty) begin
-				$display("  FIFO8 got data at cycle %0d, keccak_dout = %h", i, keccak_dout);
-				break;
-			end
 			@(posedge clk);
+			if(!DUT.ofifo_empty) begin
+				$display("  FIFO8 got data at cycle %0d, keccak_dout = %h", i, keccak_dout);
+				i = 100;
+			end
 		end
 	end else begin
 		$display("Successfully read %0d words from ofifo0", read_count);
