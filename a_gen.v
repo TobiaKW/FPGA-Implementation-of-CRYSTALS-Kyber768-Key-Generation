@@ -3,10 +3,10 @@
 module a_gen(
     input             clk,
     input             rst,
-    input             keygen_start,
+    input             a_gen_start,
     input  [255:0]    seed_a,       // rho: 32-byte public matrix seed
     input  [11:0]     a_mem_rd_addr, // flattened A memory read address
-    output reg        keygen_done,
+    output reg        a_gen_done,
     output reg        busy,
     output [11:0]     a_mem_rd_data // flattened A memory read data
 );
@@ -138,7 +138,7 @@ always @(posedge clk) begin
         sample_squeeze_ctr <= 6'd0;
         cell_ctr <= 4'd0;
         store_coeff_idx <= 8'd0;
-        keygen_done <= 1'b0;
+        a_gen_done <= 1'b0;
         busy <= 1'b0;
 
         keccak_init <= 1'b0;
@@ -161,7 +161,7 @@ always @(posedge clk) begin
         ififo_wen <= 1'b0;
         ififo_last <= 1'b0;
         ofifo0_req <= 1'b0;
-        keygen_done <= 1'b0;
+        a_gen_done <= 1'b0;
         ififo_absorb <= 1'b0;
 
         // Latch short keccak_ready pulses so FSM can react safely.
@@ -171,7 +171,7 @@ always @(posedge clk) begin
 
         case (state)
             ST_IDLE: begin
-                //state IDLE: check for keygen_start every cycle
+                //state IDLE: check for a_gen_start every cycle
                 busy <= 1'b0;
                 ofifo_ena <= 1'b0;
                 extend <= 1'b0;
@@ -180,7 +180,7 @@ always @(posedge clk) begin
                 coeff_count <= 9'd0;
                 sample_squeeze_ctr <= 6'd0;
                 store_coeff_idx <= 8'd0;
-                if (keygen_start) begin
+                if (a_gen_start) begin
                     // Generate full 3x3 matrix A starting at A[0][0].
                     busy <= 1'b1;
                     row_ctr <= 8'd0;
@@ -336,7 +336,7 @@ always @(posedge clk) begin
                 busy <= 1'b0;
                 extend <= 1'b0;
                 ofifo_ena <= 1'b0;
-                keygen_done <= 1'b1;
+                a_gen_done <= 1'b1;
                 state <= ST_IDLE;
             end
 
