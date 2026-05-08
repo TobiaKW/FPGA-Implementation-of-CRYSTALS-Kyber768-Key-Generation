@@ -23,6 +23,6 @@ localparam ST_DONE              = 4'd7;
 
 localparam KYBER_K      = 3;
 localparam POLY_N       = 256;
-localparam MATRIX_CELLS = KYBER_K; // s is a 3x1 vector
+localparam MATRIX_CELLS = KYBER_K * 1; // s is a 3x1 vector
 localparam S_COEFFS     = MATRIX_CELLS * POLY_N;
 
