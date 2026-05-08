@@ -40,6 +40,7 @@ reg [2:0] state;
 reg [3:0] absorb_word_ctr; // 0..8 (8 seed words + 1 index word)
 reg [7:0] row_ctr;
 reg [7:0] col_ctr;
+reg       ready_seen;
 
 // hash_core_Server controls
 reg        keccak_init;
@@ -107,8 +108,9 @@ always @(posedge clk) begin
     if (rst) begin 
         state <= ST_IDLE;
         absorb_word_ctr <= 4'd0;
-        mat_row <= 2'd0;
-        mat_col <= 2'd0;
+        row_ctr <= 8'd0;
+        col_ctr <= 8'd0;
+        ready_seen <= 1'b0;
         keygen_done <= 1'b0;
         busy <= 1'b0;
         a_coeff <= 12'd0;
@@ -139,19 +141,29 @@ always @(posedge clk) begin
         a_coeff_valid <= 1'b0;
         keygen_done <= 1'b0;
 
+        // Latch short keccak_ready pulses so FSM can react safely.
+        if (keccak_ready) begin
+            ready_seen <= 1'b1;
+        end
+
         case (state)
             ST_IDLE: begin
                 //state IDLE: check for keygen_start every cycle
                 busy <= 1'b0;
                 ofifo_ena <= 1'b0;
                 absorb_word_ctr <= 4'd0;
-                row_ctr <= 8'd0;
-                col_ctr <= 8'd0;
+                ready_seen <= 1'b0;
                 if (keygen_start) begin
                     //signal detected, init keccak core and change state to ABSORB
                     busy <= 1'b1;
-                    keccak_init <= 1'b1;//we reset keccak_init every cycle
+                    row_ctr <= row_idx;
+                    col_ctr <= col_idx;
+                    keccak_init <= 1'b1; //we reset keccak_init every cycle
+                    ready_seen <= 1'b0;
                     state <= ST_ABSORB;
+                end else begin
+                    row_ctr <= 8'd0;
+                    col_ctr <= 8'd0;
                 end
             end
 
@@ -160,13 +172,14 @@ always @(posedge clk) begin
                 // 8 seed words + 1 selector word {col,row}
                 ififo_wen <= 1'b1;
                 if (absorb_word_ctr < 4'd8) begin
-                    ififo_din <= seed_a[absorb_word_ctr*32 +: 32];
+                    ififo_din <= seed_a[absorb_word_ctr*32 +: 32]; // absorb the seed_a in 8 words
                 end else begin
-                    ififo_din <= {16'h0000, col_ctr, row_ctr};//16+8+8
+                    ififo_din <= {16'h0000, col_ctr, row_ctr}; // absorb the col_idx and row_idx with 16 bits zero padding before
                     ififo_last <= 1'b1;
                 end
 
                 if (absorb_word_ctr == 4'd8) begin
+                    absorb_word_ctr <= 4'd0;
                     state <= ST_WAIT_READY;
                 end else begin
                     absorb_word_ctr <= absorb_word_ctr + 4'd1;
@@ -174,24 +187,31 @@ always @(posedge clk) begin
             end
 
             ST_WAIT_READY: begin
-                if (keccak_ready) begin
+                if (ready_seen && !ofifo0_empty) begin
                     state <= ST_READ_REQ;
                 end
             end
 
             ST_READ_REQ: begin
-                ofifo0_req <= 1'b1;
-                if (ofifo0_empty) begin
+                // Read only when data is available.
+                if (!ofifo0_empty) begin
+                    ofifo0_req <= 1'b1;
                     state <= ST_CAPTURE;
                 end
             end
 
             ST_CAPTURE: begin
-
+                // Capture one sample coefficient (bootstrap path).
+                a_coeff <= ofifo0_dout[11:0];
+                a_coeff_valid <= 1'b1;
+                ready_seen <= 1'b0;
+                state <= ST_DONE;
             end
 
             ST_DONE: begin
-
+                busy <= 1'b0;
+                keygen_done <= 1'b1;
+                state <= ST_IDLE;
             end
 
             default: state <= ST_IDLE;
