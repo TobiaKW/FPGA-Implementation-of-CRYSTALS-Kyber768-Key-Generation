@@ -28,12 +28,14 @@ module topserver(
 // -----------------------------------------------------------------------------
 
 //FSM states
-localparam ST_IDLE       = 3'd0;
-localparam ST_ABSORB     = 3'd1;
-localparam ST_WAIT_READY = 3'd2;
-localparam ST_READ_REQ   = 3'd3;
-localparam ST_CAPTURE    = 3'd4;
-localparam ST_DONE       = 3'd5;
+localparam ST_IDLE                = 3'd0;
+localparam ST_ABSORB              = 3'd1;
+localparam ST_WAIT_KECCAK_READY   = 3'd2;
+localparam ST_DRAIN_OFIFO0        = 3'd3;
+localparam ST_WAIT_OFIFO0         = 3'd4;
+localparam ST_READ_REQ            = 3'd5;
+localparam ST_CAPTURE             = 3'd6;
+localparam ST_DONE                = 3'd7;
 
 
 reg [2:0] state;
@@ -57,6 +59,9 @@ reg        ififo_last;
 reg        ofifo_ena;
 reg        ofifo0_req;
 reg        ofifo1_req;
+
+//utility signals
+reg        keccak_ready_seen;
 
 // hash_core_Server outputs
 wire        ififo_empty;
@@ -132,6 +137,9 @@ always @(posedge clk) begin
         ofifo_ena <= 1'b0;
         ofifo0_req <= 1'b0;
         ofifo1_req <= 1'b0;
+
+        //ultility signals
+        keccak_ready_seen <= 1'b0;
     end else begin
         // default one-cycle pulses
         keccak_init <= 1'b0;
@@ -180,20 +188,35 @@ always @(posedge clk) begin
 
                 if (absorb_word_ctr == 4'd8) begin
                     absorb_word_ctr <= 4'd0;
-                    state <= ST_WAIT_READY;
+                    state <= ST_WAIT_KECCAK_READY;
                 end else begin
                     absorb_word_ctr <= absorb_word_ctr + 4'd1;
                 end
             end
 
-            ST_WAIT_READY: begin
-                if (ready_seen && !ofifo0_empty) begin
+            ST_WAIT_KECCAK_READY: begin
+                if (ready_seen) begin
+                    state <= ST_DRAIN_OFIFO0;
+                end
+            end
+
+            //wait for ofifo0 to be empty for the first time (useless data)
+            ST_DRAIN_OFIFO0: begin
+                ofifo_ena <= 1'b1;
+                if (ofifo0_empty) begin
+                    state <= ST_WAIT_OFIFO0;
+                end
+            end
+
+            //here comes useful data
+            ST_WAIT_OFIFO0: begin
+                if (!ofifo0_empty) begin
                     state <= ST_READ_REQ;
                 end
             end
 
+            //start reading from ofifo0_dout
             ST_READ_REQ: begin
-                // Read only when data is available.
                 if (!ofifo0_empty) begin
                     ofifo0_req <= 1'b1;
                     state <= ST_CAPTURE;
