@@ -4,6 +4,198 @@ module a_gen(
     input             clk,
     input             rst,
     input             a_gen_start,
+    input  [255:0]    seed_a,         // rho
+    input  [11:0]     a_mem_rd_addr,  // flattened A memory read address
+    output reg        a_gen_done,
+    output reg        busy,
+    output [11:0]     a_mem_rd_data   // flattened A memory read data
+);
+
+localparam KYBER_K      = 3;
+localparam POLY_N       = 256;
+localparam MATRIX_CELLS = KYBER_K * KYBER_K;
+localparam A_COEFFS     = MATRIX_CELLS * POLY_N;
+
+localparam ST_IDLE            = 3'd0;
+localparam ST_SAMPLE          = 3'd1;
+localparam ST_WAIT_HASH_DONE  = 3'd2;
+localparam ST_STORE_POLY      = 3'd3;
+localparam ST_DONE            = 3'd4;
+
+reg [2:0] state;
+
+reg [3:0] cell_ctr;
+reg [7:0] row_ctr;
+reg [7:0] col_ctr;
+
+reg [8:0] coeff_count;
+reg [7:0] store_coeff_idx;
+
+reg [11:0] a_poly [0:255];
+reg [11:0] A_mem [0:A_COEFFS-1];
+
+reg        hash_start;
+reg        stop_stream;
+wire       hash_busy;
+wire       hash_done;
+wire [31:0] stream_word;
+wire        stream_valid;
+
+wire [11:0] cand0;
+wire [11:0] cand1;
+wire        cand0_valid;
+wire        cand1_valid;
+wire [11:0] A_store_addr;
+
+assign cand0 = stream_word[11:0];
+assign cand1 = stream_word[23:12];
+assign cand0_valid = (cand0 < 12'd3329);
+assign cand1_valid = (cand1 < 12'd3329);
+assign A_store_addr = {cell_ctr, 8'd0} + {4'd0, store_coeff_idx};
+assign a_mem_rd_data = A_mem[a_mem_rd_addr];
+
+// MODE_A_UNIFORM = 2'd0 in hash_unit.v
+hash_unit u_hash_unit (
+    .clk(clk),
+    .rst(rst),
+    .start(hash_start),
+    .mode(2'd0),
+    .seed(seed_a),
+    .row_idx(row_ctr),
+    .col_idx(col_ctr),
+    .nonce(8'd0),
+    .stop_stream(stop_stream),
+    .busy(hash_busy),
+    .done(hash_done),
+    .stream_word(stream_word),
+    .stream_valid(stream_valid),
+    .stream_ready(1'b1)
+);
+
+always @(posedge clk) begin
+    if (rst) begin
+        state <= ST_IDLE;
+        cell_ctr <= 4'd0;
+        row_ctr <= 8'd0;
+        col_ctr <= 8'd0;
+        coeff_count <= 9'd0;
+        store_coeff_idx <= 8'd0;
+        hash_start <= 1'b0;
+        stop_stream <= 1'b0;
+        a_gen_done <= 1'b0;
+        busy <= 1'b0;
+    end else begin
+        // one-cycle pulse defaults
+        hash_start <= 1'b0;
+        a_gen_done <= 1'b0;
+
+        case (state)
+            ST_IDLE: begin
+                busy <= 1'b0;
+                stop_stream <= 1'b0;
+                coeff_count <= 9'd0;
+                store_coeff_idx <= 8'd0;
+
+                if (a_gen_start) begin
+                    busy <= 1'b1;
+                    cell_ctr <= 4'd0;
+                    row_ctr <= 8'd0;
+                    col_ctr <= 8'd0;
+                    coeff_count <= 9'd0;
+                    hash_start <= 1'b1;
+                    state <= ST_SAMPLE;
+                end
+            end
+
+            ST_SAMPLE: begin
+                busy <= 1'b1;
+
+                if (stream_valid) begin
+                    if (cand0_valid && cand1_valid) begin
+                        if (coeff_count <= 9'd253) begin
+                            a_poly[coeff_count[7:0]] <= cand0;
+                            a_poly[coeff_count[7:0] + 8'd1] <= cand1;
+                            coeff_count <= coeff_count + 9'd2;
+                        end else if (coeff_count == 9'd254) begin
+                            a_poly[8'd254] <= cand0;
+                            a_poly[8'd255] <= cand1;
+                            coeff_count <= 9'd256;
+                            stop_stream <= 1'b1;
+                            state <= ST_WAIT_HASH_DONE;
+                        end else begin
+                            a_poly[8'd255] <= cand0;
+                            coeff_count <= 9'd256;
+                            stop_stream <= 1'b1;
+                            state <= ST_WAIT_HASH_DONE;
+                        end
+                    end else if (cand0_valid || cand1_valid) begin
+                        if (coeff_count <= 9'd254) begin
+                            a_poly[coeff_count[7:0]] <= cand0_valid ? cand0 : cand1;
+                            coeff_count <= coeff_count + 9'd1;
+                        end else begin
+                            a_poly[8'd255] <= cand0_valid ? cand0 : cand1;
+                            coeff_count <= 9'd256;
+                            stop_stream <= 1'b1;
+                            state <= ST_WAIT_HASH_DONE;
+                        end
+                    end
+                end
+            end
+
+            ST_WAIT_HASH_DONE: begin
+                busy <= 1'b1;
+                if (hash_done) begin
+                    stop_stream <= 1'b0;
+                    store_coeff_idx <= 8'd0;
+                    state <= ST_STORE_POLY;
+                end
+            end
+
+            ST_STORE_POLY: begin
+                busy <= 1'b1;
+                A_mem[A_store_addr] <= a_poly[store_coeff_idx];
+
+                if (store_coeff_idx == 8'd255) begin
+                    store_coeff_idx <= 8'd0;
+
+                    if (cell_ctr == MATRIX_CELLS - 1) begin
+                        state <= ST_DONE;
+                    end else begin
+                        cell_ctr <= cell_ctr + 4'd1;
+                        if (col_ctr == KYBER_K - 1) begin
+                            row_ctr <= row_ctr + 8'd1;
+                            col_ctr <= 8'd0;
+                        end else begin
+                            col_ctr <= col_ctr + 8'd1;
+                        end
+
+                        coeff_count <= 9'd0;
+                        hash_start <= 1'b1;
+                        state <= ST_SAMPLE;
+                    end
+                end else begin
+                    store_coeff_idx <= store_coeff_idx + 8'd1;
+                end
+            end
+
+            ST_DONE: begin
+                busy <= 1'b0;
+                a_gen_done <= 1'b1;
+                state <= ST_IDLE;
+            end
+
+            default: state <= ST_IDLE;
+        endcase
+    end
+end
+
+endmodule
+/*`timescale 1ns / 1ps
+
+module a_gen(
+    input             clk,
+    input             rst,
+    input             a_gen_start,
     input  [255:0]    seed_a,       // rho: 32-byte public matrix seed
     input  [11:0]     a_mem_rd_addr, // flattened A memory read address
     output reg        a_gen_done,
@@ -346,3 +538,4 @@ always @(posedge clk) begin
 end
 
 endmodule
+*/

@@ -11,18 +11,28 @@ module topserver(
     output reg [11:0] rd_data
 );
 
-localparam ST_IDLE      = 2'd0;
-localparam ST_WAIT_AGEN = 2'd1;
-localparam ST_READ_A    = 2'd2;
-localparam ST_DONE      = 2'd3;
+localparam ST_IDLE       = 3'd0;
+localparam ST_WAIT_AGEN  = 3'd1;
+localparam ST_READ_A     = 3'd2;
+localparam ST_WAIT_S_GEN = 3'd3;
+localparam ST_READ_S     = 3'd4;
+localparam ST_DONE       = 3'd5;
 
 localparam A_COEFFS = 12'd2304; // 3x3x256
+localparam S_COEFFS = 12'd768;  // k*256 for k=3
 
-reg [1:0] state;
+reg [2:0] state;
 reg       a_gen_start;
+reg       s_gen_start;
 wire      a_gen_done;
 wire      a_gen_busy;
 wire [11:0] a_mem_rd_data;
+wire      s_gen_done;
+wire      s_gen_busy;
+wire [11:0] s_mem_rd_data;
+wire [255:0] sigma;
+
+assign sigma = seed_a; // test hookup: reuse seed_a as sigma for now
 
 a_gen u_a_gen (
     .clk(clk),
@@ -35,16 +45,29 @@ a_gen u_a_gen (
     .a_mem_rd_data(a_mem_rd_data)
 );
 
+s_gen u_s_gen (
+    .clk(clk),
+    .rst(rst),
+    .s_gen_start(s_gen_start),
+    .sigma(sigma),
+    .s_mem_rd_addr(rd_addr),
+    .s_gen_done(s_gen_done),
+    .busy(s_gen_busy),
+    .s_mem_rd_data(s_mem_rd_data)
+);
+
 always @(posedge clk) begin
     if (rst) begin
         state <= ST_IDLE;
         a_gen_start <= 1'b0;
+        s_gen_start <= 1'b0;
         top_done <= 1'b0;
         rd_valid <= 1'b0;
         rd_addr <= 12'd0;
         rd_data <= 12'd0;
     end else begin
         a_gen_start <= 1'b0; // default pulse-low
+        s_gen_start <= 1'b0; // default pulse-low
         top_done <= 1'b0;
         rd_valid <= 1'b0;
 
@@ -69,6 +92,25 @@ always @(posedge clk) begin
                 rd_valid <= 1'b1;
                 rd_data <= a_mem_rd_data;
                 if (rd_addr == (A_COEFFS - 1'b1)) begin
+                    rd_addr <= 12'd0;
+                    s_gen_start <= 1'b1;
+                    state <= ST_WAIT_S_GEN;
+                end else begin
+                    rd_addr <= rd_addr + 12'd1;
+                end
+            end
+
+            ST_WAIT_S_GEN: begin
+                if (s_gen_done) begin
+                    rd_addr <= 12'd0;
+                    state <= ST_READ_S;
+                end
+            end
+
+            ST_READ_S: begin
+                rd_valid <= 1'b1;
+                rd_data <= s_mem_rd_data;
+                if (rd_addr == (S_COEFFS - 1'b1)) begin
                     state <= ST_DONE;
                 end else begin
                     rd_addr <= rd_addr + 12'd1;

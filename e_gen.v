@@ -1,19 +1,19 @@
 `timescale 1ns / 1ps
 
-module s_gen(
+module e_gen(
     input             clk,
     input             rst,
-    input             s_gen_start,
+    input             e_gen_start,
     input  [255:0]    sigma,          // noise seed (32 bytes)
-    input  [11:0]     s_mem_rd_addr,  // flattened S memory read address
-    output reg        s_gen_done,
+    input  [11:0]     e_mem_rd_addr,  // flattened E memory read address
+    output reg        e_gen_done,
     output reg        busy,
-    output [11:0]     s_mem_rd_data   // flattened S memory read data
+    output [11:0]     e_mem_rd_data   // flattened E memory read data
 );
 
 localparam KYBER_K  = 3;
 localparam POLY_N   = 256;
-localparam S_COEFFS = KYBER_K * POLY_N;
+localparam E_COEFFS = KYBER_K * POLY_N;
 
 localparam ST_IDLE           = 3'd0;
 localparam ST_SAMPLE         = 3'd1;
@@ -27,8 +27,8 @@ reg [1:0] poly_ctr; // 0..2 for k=3
 reg [8:0] coeff_count;
 reg [7:0] store_coeff_idx;
 
-reg [11:0] s_poly [0:255];
-reg [11:0] S_mem [0:S_COEFFS-1];
+reg [11:0] e_poly [0:255];
+reg [11:0] E_mem [0:E_COEFFS-1];
 
 reg        hash_start;
 reg        stop_stream;
@@ -36,16 +36,16 @@ wire       hash_done;
 wire [31:0] stream_word;
 wire        stream_valid;
 
-wire [11:0] S_store_addr;
+wire [11:0] E_store_addr;
 
 integer j;
 reg [31:0] d_tmp;
 reg [8:0] widx;
 reg [1:0] a_bits;
 reg [1:0] b_bits;
-reg signed [3:0] coeff_s;
-assign S_store_addr = {poly_ctr, 8'd0} + {4'd0, store_coeff_idx};
-assign s_mem_rd_data = S_mem[s_mem_rd_addr];
+reg signed [3:0] coeff_e;
+assign E_store_addr = {poly_ctr, 8'd0} + {4'd0, store_coeff_idx};
+assign e_mem_rd_data = E_mem[e_mem_rd_addr];
 
 // MODE_NOISE = 2'd1 in hash_unit
 hash_unit u_hash_unit (
@@ -56,7 +56,7 @@ hash_unit u_hash_unit (
     .seed(sigma),
     .row_idx(8'd0),
     .col_idx(8'd0),
-    .nonce({6'd0, poly_ctr}), // distinct nonce per s polynomial (0,1,2)
+    .nonce(8'd3 + poly_ctr), // distinct nonce per e polynomial (3,4,5)
     .stop_stream(stop_stream),
     .busy(),
     .done(hash_done),
@@ -73,11 +73,11 @@ always @(posedge clk) begin
         store_coeff_idx <= 8'd0;
         hash_start <= 1'b0;
         stop_stream <= 1'b0;
-        s_gen_done <= 1'b0;
+        e_gen_done <= 1'b0;
         busy <= 1'b0;
     end else begin
         hash_start <= 1'b0; // one-cycle pulse default
-        s_gen_done <= 1'b0;
+        e_gen_done <= 1'b0;
 
         case (state)
             ST_IDLE: begin
@@ -86,7 +86,7 @@ always @(posedge clk) begin
                 coeff_count <= 9'd0;
                 store_coeff_idx <= 8'd0;
 
-                if (s_gen_start) begin
+                if (e_gen_start) begin
                     busy <= 1'b1;
                     poly_ctr <= 2'd0;
                     coeff_count <= 9'd0;
@@ -112,8 +112,8 @@ always @(posedge clk) begin
                         if (widx < 9'd256) begin
                             a_bits = (d_tmp >> (4*j)) & 32'h3;
                             b_bits = (d_tmp >> (4*j + 2)) & 32'h3;
-                            coeff_s = $signed({1'b0, a_bits}) - $signed({1'b0, b_bits});
-                            s_poly[widx[7:0]] <= {{8{coeff_s[3]}}, coeff_s};
+                            coeff_e = $signed({1'b0, a_bits}) - $signed({1'b0, b_bits});
+                            e_poly[widx[7:0]] <= {{8{coeff_e[3]}}, coeff_e};
                             widx = widx + 9'd1;
                         end
                     end
@@ -137,7 +137,7 @@ always @(posedge clk) begin
 
             ST_STORE_POLY: begin
                 busy <= 1'b1;
-                S_mem[S_store_addr] <= s_poly[store_coeff_idx];
+                E_mem[E_store_addr] <= e_poly[store_coeff_idx];
 
                 if (store_coeff_idx == 8'd255) begin
                     store_coeff_idx <= 8'd0;
@@ -156,7 +156,7 @@ always @(posedge clk) begin
 
             ST_DONE: begin
                 busy <= 1'b0;
-                s_gen_done <= 1'b1;
+                e_gen_done <= 1'b1;
                 state <= ST_IDLE;
             end
 
