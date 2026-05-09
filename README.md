@@ -4,12 +4,18 @@ Course Project for CENG3430 @CUHK, Spring 2026.
 
 ### Source attribution
 
+
+
 - **Keccak server**: Part of the hashing core (`hash_core_Server.v` and related files) is imported from  
   [xingyf14](https://github.com/xingyf14).
 - **NTT / polynomial multiplication**: The NTT (number-theoretic transform) and polynomial multiplication hardware used in this project are adapted from:
   - **Repository**: `kyber-polmul-hw`
   - **Author**: acmert
   - **URL**: https://github.com/acmert/kyber-polmul-hw
+- **TRNG**: The true random number generator integration is based on `neoTRNG` by **Stephan Nolting (stnolting)**.
+  - **Repository**: `neoTRNG`
+  - **Author**: stnolting
+  - **URL**: https://github.com/stnolting/neoTRNG
 
 ### Academic use only
 

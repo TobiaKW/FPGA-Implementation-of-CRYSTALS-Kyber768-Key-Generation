@@ -21,6 +21,12 @@ module BRAM(input             clk,
 // bram
 (* ram_style="block" *) reg [11:0] blockram [15:0];
 
+// Simulation: avoid X on read-before-write (propagates to dout in OP_READ_DATA)
+integer bram_init_i;
+initial
+    for (bram_init_i = 0; bram_init_i < 16; bram_init_i = bram_init_i + 1)
+        blockram[bram_init_i] = 12'd0;
+
 // write operation
 always @(posedge clk) begin
     if(wen)

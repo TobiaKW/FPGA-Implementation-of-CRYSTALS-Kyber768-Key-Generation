@@ -8,7 +8,18 @@ module e_gen(
     input  [11:0]     e_mem_rd_addr,  // flattened E memory read address
     output reg        e_gen_done,
     output reg        busy,
-    output [11:0]     e_mem_rd_data   // flattened E memory read data
+    output [11:0]     e_mem_rd_data,   // flattened E memory read data
+    // Shared hash_unit interface
+    output            hash_start_o,
+    output     [1:0]  hash_mode_o,
+    output     [255:0] hash_seed_o,
+    output     [7:0]  hash_row_idx_o,
+    output     [7:0]  hash_col_idx_o,
+    output     [7:0]  hash_nonce_o,
+    output            hash_stop_stream_o,
+    input             hash_done_i,
+    input      [31:0] hash_stream_word_i,
+    input             hash_stream_valid_i
 );
 
 localparam KYBER_K  = 3;
@@ -32,9 +43,6 @@ reg [11:0] E_mem [0:E_COEFFS-1];
 
 reg        hash_start;
 reg        stop_stream;
-wire       hash_done;
-wire [31:0] stream_word;
-wire        stream_valid;
 
 wire [11:0] E_store_addr;
 
@@ -46,24 +54,13 @@ reg [1:0] b_bits;
 reg signed [3:0] coeff_e;
 assign E_store_addr = {poly_ctr, 8'd0} + {4'd0, store_coeff_idx};
 assign e_mem_rd_data = E_mem[e_mem_rd_addr];
-
-// MODE_NOISE = 2'd1 in hash_unit
-hash_unit u_hash_unit (
-    .clk(clk),
-    .rst(rst),
-    .start(hash_start),
-    .mode(2'd1),
-    .seed(sigma),
-    .row_idx(8'd0),
-    .col_idx(8'd0),
-    .nonce(8'd3 + poly_ctr), // distinct nonce per e polynomial (3,4,5)
-    .stop_stream(stop_stream),
-    .busy(),
-    .done(hash_done),
-    .stream_word(stream_word),
-    .stream_valid(stream_valid),
-    .stream_ready(1'b1)
-);
+assign hash_start_o = hash_start;
+assign hash_mode_o = 2'd1; // MODE_NOISE
+assign hash_seed_o = sigma;
+assign hash_row_idx_o = 8'd0;
+assign hash_col_idx_o = 8'd0;
+assign hash_nonce_o = 8'd3 + poly_ctr;
+assign hash_stop_stream_o = stop_stream;
 
 always @(posedge clk) begin
     if (rst) begin
@@ -98,14 +95,14 @@ always @(posedge clk) begin
             ST_SAMPLE: begin
                 busy <= 1'b1;
 
-                if (stream_valid) begin
+                if (hash_stream_valid_i) begin
                     // CBD eta=2 reference:
                     // d = (t & 0x55555555) + ((t >> 1) & 0x55555555)
                     // for j=0..7:
                     //   a = (d >> (4*j)) & 0x3
                     //   b = (d >> (4*j+2)) & 0x3
                     //   coeff = a - b
-                    d_tmp = (stream_word & 32'h5555_5555) + ((stream_word >> 1) & 32'h5555_5555);
+                    d_tmp = (hash_stream_word_i & 32'h5555_5555) + ((hash_stream_word_i >> 1) & 32'h5555_5555);
                     widx = coeff_count;
 
                     for (j = 0; j < 8; j = j + 1) begin
@@ -128,7 +125,7 @@ always @(posedge clk) begin
 
             ST_WAIT_HASH_DONE: begin
                 busy <= 1'b1;
-                if (hash_done) begin
+                if (hash_done_i) begin
                     stop_stream <= 1'b0;
                     store_coeff_idx <= 8'd0;
                     state <= ST_STORE_POLY;

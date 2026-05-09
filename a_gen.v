@@ -8,7 +8,18 @@ module a_gen(
     input  [11:0]     a_mem_rd_addr,  // flattened A memory read address
     output reg        a_gen_done,
     output reg        busy,
-    output [11:0]     a_mem_rd_data   // flattened A memory read data
+    output [11:0]     a_mem_rd_data,   // flattened A memory read data
+    // Shared hash_unit interface
+    output            hash_start_o,
+    output     [1:0]  hash_mode_o,
+    output     [255:0] hash_seed_o,
+    output     [7:0]  hash_row_idx_o,
+    output     [7:0]  hash_col_idx_o,
+    output     [7:0]  hash_nonce_o,
+    output            hash_stop_stream_o,
+    input             hash_done_i,
+    input      [31:0] hash_stream_word_i,
+    input             hash_stream_valid_i
 );
 
 localparam KYBER_K      = 3;
@@ -36,10 +47,6 @@ reg [11:0] A_mem [0:A_COEFFS-1];
 
 reg        hash_start;
 reg        stop_stream;
-wire       hash_busy;
-wire       hash_done;
-wire [31:0] stream_word;
-wire        stream_valid;
 
 wire [11:0] cand0;
 wire [11:0] cand1;
@@ -47,30 +54,19 @@ wire        cand0_valid;
 wire        cand1_valid;
 wire [11:0] A_store_addr;
 
-assign cand0 = stream_word[11:0];
-assign cand1 = stream_word[23:12];
+assign cand0 = hash_stream_word_i[11:0];
+assign cand1 = hash_stream_word_i[23:12];
 assign cand0_valid = (cand0 < 12'd3329);
 assign cand1_valid = (cand1 < 12'd3329);
 assign A_store_addr = {cell_ctr, 8'd0} + {4'd0, store_coeff_idx};
 assign a_mem_rd_data = A_mem[a_mem_rd_addr];
-
-// MODE_A_UNIFORM = 2'd0 in hash_unit.v
-hash_unit u_hash_unit (
-    .clk(clk),
-    .rst(rst),
-    .start(hash_start),
-    .mode(2'd0),
-    .seed(seed_a),
-    .row_idx(row_ctr),
-    .col_idx(col_ctr),
-    .nonce(8'd0),
-    .stop_stream(stop_stream),
-    .busy(hash_busy),
-    .done(hash_done),
-    .stream_word(stream_word),
-    .stream_valid(stream_valid),
-    .stream_ready(1'b1)
-);
+assign hash_start_o = hash_start;
+assign hash_mode_o = 2'd0; // MODE_A_UNIFORM
+assign hash_seed_o = seed_a;
+assign hash_row_idx_o = row_ctr;
+assign hash_col_idx_o = col_ctr;
+assign hash_nonce_o = 8'd0;
+assign hash_stop_stream_o = stop_stream;
 
 always @(posedge clk) begin
     if (rst) begin
@@ -110,7 +106,7 @@ always @(posedge clk) begin
             ST_SAMPLE: begin
                 busy <= 1'b1;
 
-                if (stream_valid) begin
+                if (hash_stream_valid_i) begin
                     if (cand0_valid && cand1_valid) begin
                         if (coeff_count <= 9'd253) begin
                             a_poly[coeff_count[7:0]] <= cand0;
@@ -144,7 +140,7 @@ always @(posedge clk) begin
 
             ST_WAIT_HASH_DONE: begin
                 busy <= 1'b1;
-                if (hash_done) begin
+                if (hash_done_i) begin
                     stop_stream <= 1'b0;
                     store_coeff_idx <= 8'd0;
                     state <= ST_STORE_POLY;

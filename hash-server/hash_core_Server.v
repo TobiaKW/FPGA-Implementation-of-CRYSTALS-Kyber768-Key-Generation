@@ -190,7 +190,7 @@ assign ofifo1_wen = (patt_bit|eta3_bit) & decode_valid & ~ofifo1_full_r1;
 //fifo0 is for 24 bits words, fifo1 is for 25 bits(for pattern and eta3).
 
 always @(posedge clk or negedge rst) begin //tracks the full status of fifo1 //negedge rst is for asynchronous reset.
-	if(rst)
+	if(!rst)
 		ofifo1_full_r1 <= 1'h 0;
 	else if(keccak_ready) //when the before keccak core is finished. refresh.
 		ofifo1_full_r1 <= 1'h 0;
