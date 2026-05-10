@@ -12,8 +12,8 @@ module se_gen(
     input      [11:0]  e_mem_rd_addr,
     output reg         gen_done,
     output reg         busy,
-    output     [11:0]  s_mem_rd_data,
-    output     [11:0]  e_mem_rd_data,
+    output reg  [11:0] s_mem_rd_data,
+    output reg  [11:0] e_mem_rd_data,
     // Shared hash_unit interface
     output             hash_start_o,
     output      [1:0]  hash_mode_o,
@@ -44,8 +44,11 @@ reg [1:0] poly_ctr; // 0..2 for k=3
 reg [8:0] coeff_count;
 reg [7:0] store_coeff_idx;
 
+(* ram_style = "block" *)
 reg [11:0] s_poly [0:255];
+(* ram_style = "block" *)
 reg [11:0] S_mem [0:S_COEFFS-1];
+(* ram_style = "block" *)
 reg [11:0] E_mem [0:E_COEFFS-1];
 
 reg        hash_start;
@@ -54,17 +57,23 @@ reg        stop_stream;
 wire [11:0] S_store_addr;
 wire [11:0] E_store_addr;
 
-integer j;
+// CBD sample: one s_poly write per cycle (multi-write per beat breaks BRAM inference).
+reg [31:0] hash_word_latched;
+reg        sam_active;
+reg [2:0]  sam_j;
+reg [8:0]  widx_run;
+
 reg [31:0] d_tmp;
-reg [8:0] widx;
 reg [1:0] a_bits;
 reg [1:0] b_bits;
 reg signed [3:0] coeff_s;
 
 assign S_store_addr = {poly_ctr, 8'd0} + {4'd0, store_coeff_idx};
 assign E_store_addr = {poly_ctr, 8'd0} + {4'd0, store_coeff_idx};
-assign s_mem_rd_data = S_mem[s_mem_rd_addr];
-assign e_mem_rd_data = E_mem[e_mem_rd_addr];
+
+// Registered read port (1-cycle latency) so S_mem/E_mem infer as Block RAM.
+reg [11:0] s_mem_rd_addr_r;
+reg [11:0] e_mem_rd_addr_r;
 
 assign hash_start_o = hash_start;
 assign hash_mode_o = 2'd1; // MODE_NOISE
@@ -85,9 +94,22 @@ always @(posedge clk) begin
         stop_stream <= 1'b0;
         gen_done <= 1'b0;
         busy <= 1'b0;
+        sam_active <= 1'b0;
+        sam_j <= 3'd0;
+        widx_run <= 9'd0;
+        hash_word_latched <= 32'd0;
+        s_mem_rd_addr_r <= 12'd0;
+        e_mem_rd_addr_r <= 12'd0;
+        s_mem_rd_data <= 12'd0;
+        e_mem_rd_data <= 12'd0;
     end else begin
         hash_start <= 1'b0; // one-cycle pulse default
         gen_done <= 1'b0;
+
+        s_mem_rd_addr_r <= s_mem_rd_addr;
+        e_mem_rd_addr_r <= e_mem_rd_addr;
+        s_mem_rd_data <= S_mem[s_mem_rd_addr_r];
+        e_mem_rd_data <= E_mem[e_mem_rd_addr_r];
 
         case (state)
             ST_IDLE: begin
@@ -109,31 +131,32 @@ always @(posedge clk) begin
             ST_SAMPLE: begin
                 busy <= 1'b1;
 
-                if (hash_stream_valid_i) begin
-                    // CBD eta=2:
-                    // d = (t & 0x55555555) + ((t >> 1) & 0x55555555)
-                    // for j=0..7:
-                    //   a = (d >> (4*j)) & 0x3
-                    //   b = (d >> (4*j+2)) & 0x3
-                    //   coeff = a - b
-                    d_tmp = (hash_stream_word_i & 32'h5555_5555) + ((hash_stream_word_i >> 1) & 32'h5555_5555);
-                    widx = coeff_count;
-
-                    for (j = 0; j < 8; j = j + 1) begin//feed
-                        if (widx < 9'd256) begin
-                            a_bits = (d_tmp >> (4*j)) & 32'h3;
-                            b_bits = (d_tmp >> (4*j + 2)) & 32'h3;
-                            coeff_s = $signed({1'b0, a_bits}) - $signed({1'b0, b_bits});
-                            s_poly[widx[7:0]] <= {{8{coeff_s[3]}}, coeff_s};
-                            widx = widx + 9'd1;
+                if (!sam_active) begin
+                    if (hash_stream_valid_i) begin
+                        hash_word_latched <= hash_stream_word_i;
+                        widx_run <= coeff_count;
+                        sam_active <= 1'b1;
+                        sam_j <= 3'd0;
+                    end
+                end else begin
+                    d_tmp = (hash_word_latched & 32'h5555_5555)
+                          + ((hash_word_latched >> 1) & 32'h5555_5555);
+                    a_bits = (d_tmp >> (4 * sam_j)) & 32'h3;
+                    b_bits = (d_tmp >> (4 * sam_j + 2)) & 32'h3;
+                    coeff_s = $signed({1'b0, a_bits}) - $signed({1'b0, b_bits});
+                    if (widx_run < 9'd256) begin
+                        s_poly[widx_run[7:0]] <= {{8{coeff_s[3]}}, coeff_s};
+                        widx_run <= widx_run + 9'd1;
+                    end
+                    if (sam_j == 3'd7) begin
+                        sam_active <= 1'b0;
+                        coeff_count <= (widx_run < 9'd256) ? (widx_run + 9'd1) : widx_run;
+                        if (((widx_run < 9'd256) ? (widx_run + 9'd1) : widx_run) >= 9'd256) begin
+                            stop_stream <= 1'b1;
+                            state <= ST_WAIT_HASH_DONE;
                         end
-                    end
-
-                    coeff_count <= widx;
-                    if (widx >= 9'd256) begin
-                        stop_stream <= 1'b1;
-                        state <= ST_WAIT_HASH_DONE;
-                    end
+                    end else
+                        sam_j <= sam_j + 3'd1;
                 end
             end
 

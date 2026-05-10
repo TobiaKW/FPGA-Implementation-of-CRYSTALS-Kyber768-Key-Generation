@@ -5,27 +5,44 @@ module topserver(
     input             rst,
     input             top_start,
     input  [255:0]    seed_a,
+    input             out_rd_en,
+    input             out_rd_sk,      // 0: pk, 1: sk
+    input  [11:0]     out_rd_addr,    // byte address
     output reg        top_done,
     output reg        rd_valid,
     output reg [11:0] rd_addr,
     output reg [11:0] rd_data
 );
 
-localparam ST_IDLE       = 4'd0;
-localparam ST_WAIT_A_GEN = 4'd1;
-localparam ST_WAIT_S_GEN = 4'd2;
-localparam ST_WAIT_E_GEN = 4'd3;
-localparam ST_COMPUTE_AS = 4'd4;
-localparam ST_WAIT_AS_DONE= 4'd5;
-localparam ST_ADD_E      = 4'd6;
-localparam ST_DONE       = 4'd7;
-localparam ST_TRNG_INIT  = 4'd8;
-localparam ST_TRNG_COLLECT = 4'd9;
+localparam ST_IDLE       = 5'd0;
+localparam ST_WAIT_A_GEN = 5'd1;
+localparam ST_WAIT_S_GEN = 5'd2;
+localparam ST_WAIT_E_GEN = 5'd3;
+localparam ST_COMPUTE_AS = 5'd4;
+localparam ST_WAIT_AS_DONE= 5'd5;
+localparam ST_ADD_E      = 5'd6;
+localparam ST_DONE       = 5'd7;
+localparam ST_TRNG_INIT  = 5'd8;
+localparam ST_TRNG_COLLECT = 5'd9;
+localparam ST_HASH_PK_START = 5'd10;
+localparam ST_HASH_PK_STREAM = 5'd11;
+localparam ST_HASH_PK_WAIT_DONE = 5'd12;
+localparam ST_BUILD_PK_INIT = 5'd13;
+localparam ST_BUILD_PK_PACK = 5'd14;
+localparam ST_HASH_PK_ABSORB = 5'd15;
+localparam ST_BUILD_SK_INIT = 5'd16;
+localparam ST_BUILD_SK_S_PACK = 5'd17;
+localparam ST_BUILD_SK_COPY_PK = 5'd18;
+localparam ST_BUILD_SK_COPY_HPK = 5'd19;
+localparam ST_BUILD_SK_COPY_Z = 5'd20;
 
 localparam E_COEFFS = 12'd768;  // k*256 for k=3
+localparam PK_BYTES = 11'd1184;
+localparam PK_WORDS = 9'd296;
+localparam SK_BYTES = 12'd2400;
 
 //A, s, e generation modules
-reg [3:0] state;
+reg [4:0] state;
 reg       a_gen_start;
 wire      a_gen_done;
 wire      a_gen_busy;
@@ -48,12 +65,41 @@ wire [255:0] se_hash_seed;
 wire [7:0]  se_hash_row_idx, se_hash_col_idx, se_hash_nonce;
 wire        shared_hash_busy, shared_hash_done, shared_stream_valid;
 wire [31:0] shared_stream_word;
-wire sel_a, sel_se;
+wire sel_a, sel_se, sel_top;
 wire sel_none;
 wire hash_start_mux, hash_stop_mux;
 wire [1:0] hash_mode_mux;
 wire [255:0] hash_seed_mux;
 wire [7:0] hash_row_mux, hash_col_mux, hash_nonce_mux;
+reg         top_hash_start;
+reg         top_hash_stop;
+reg [2:0]   top_hash_word_ctr;
+reg [255:0] hpk_reg;
+wire [255:0] pk_hash_seed;
+reg [5:0]   pk_rho_idx;
+reg [8:0]   pk_pair_idx;
+reg [10:0]  pk_wr_idx;
+wire        top_hash_absorb_ready;
+reg [8:0]   top_hash_absorb_idx;
+wire [31:0] top_hash_absorb_word;
+wire        top_hash_absorb_valid;
+wire        top_hash_absorb_last;
+reg [11:0]  sk_wr_idx;
+reg [8:0]   sk_s_pair_idx;
+reg [1:0]   sk_s_sub; // S_PACK: 0 wait, 1 latch c0, 2 wait c1, 3 write 3 bytes
+reg [11:0]  sk_s_c0;
+reg [10:0]  sk_copy_idx;
+reg         keys_ready;
+reg  [7:0]  sk [0:2399]; // secret key bytes: s || pk || H(pk) || z
+
+// t_mem BRAM control (array lives in bram_sdp_12x768)
+// add_e_phase: 0/1 = wait for t_mem + e_mem registered reads, 2 = latch sum, 3 = WE pulse
+reg  [1:0]  add_e_phase;
+reg  [11:0] t_mem_wdata_reg;
+reg  [2:0]  pk_t_phase; // 0..5: addr0, cap0, addr1, wait, cap1, write sk
+reg  [11:0] pk_tc0;
+reg  [11:0] pk_tc1;
+reg         t_mem_add_we;
 
 //mat_vec_mul module
 reg       mat_vec_mul_start;
@@ -66,12 +112,12 @@ wire [9:0] t_wr_addr;
 wire [11:0] t_wr_data;
 wire [11:0] a_rd_addr_mux;
 wire [11:0] s_rd_addr_mux;
-reg  [11:0] t_mem [0:E_COEFFS-1];
 reg         trng_en;
 wire        trng_valid;
 wire [7:0]  trng_byte;
 reg [6:0]   trng_cnt;
 reg [255:0] seed_a_reg;
+reg [255:0] sigma_reg;
 reg [255:0] z_reg;
 `ifdef SYNTHESIS
 localparam TRNG_SIM_MODE = 1'b0; // physical TRNG in synthesis/implementation
@@ -92,17 +138,35 @@ begin
 end
 endfunction
 
-assign sigma = seed_a_reg; // temporary hookup: reuse TRNG seed_a for sigma
+assign sigma = sigma_reg; // independent sigma seed from TRNG
+// Legacy 256-bit seed path kept for compatibility; full pk hashing uses absorb stream.
+assign pk_hash_seed = {sk[12'd1183], sk[12'd1182], sk[12'd1181], sk[12'd1180],
+                       sk[12'd1179], sk[12'd1178], sk[12'd1177], sk[12'd1176],
+                       sk[12'd1175], sk[12'd1174], sk[12'd1173], sk[12'd1172],
+                       sk[12'd1171], sk[12'd1170], sk[12'd1169], sk[12'd1168],
+                       sk[12'd1167], sk[12'd1166], sk[12'd1165], sk[12'd1164],
+                       sk[12'd1163], sk[12'd1162], sk[12'd1161], sk[12'd1160],
+                       sk[12'd1159], sk[12'd1158], sk[12'd1157], sk[12'd1156],
+                       sk[12'd1155], sk[12'd1154], sk[12'd1153], sk[12'd1152]};//reverse order
+assign top_hash_absorb_valid = (state == ST_HASH_PK_ABSORB) && (top_hash_absorb_idx < PK_WORDS);
+assign top_hash_absorb_last  = (top_hash_absorb_idx == (PK_WORDS - 9'd1));
+assign top_hash_absorb_word  = {sk[12'd1152 + (({2'b00, top_hash_absorb_idx} << 2) + 11'd3)],
+                                sk[12'd1152 + (({2'b00, top_hash_absorb_idx} << 2) + 11'd2)],
+                                sk[12'd1152 + (({2'b00, top_hash_absorb_idx} << 2) + 11'd1)],
+                                sk[12'd1152 + (({2'b00, top_hash_absorb_idx} << 2))]};
 assign sel_a = a_gen_busy | a_hash_start;
 assign sel_se = (~sel_a) & (se_gen_busy | se_hash_start);
-assign sel_none = ~sel_a & ~sel_se;
-assign hash_start_mux = sel_a ? a_hash_start : (sel_se ? se_hash_start : 1'b0);
-assign hash_mode_mux  = sel_a ? a_hash_mode  : (sel_se ? se_hash_mode  : 2'd0);
-assign hash_seed_mux  = sel_a ? a_hash_seed  : (sel_se ? se_hash_seed  : 256'd0);
+assign sel_top = (~sel_a) & (~sel_se) &
+                 (state == ST_HASH_PK_START || state == ST_HASH_PK_ABSORB ||
+                  state == ST_HASH_PK_STREAM || state == ST_HASH_PK_WAIT_DONE);
+assign sel_none = ~sel_a & ~sel_se & ~sel_top;
+assign hash_start_mux = sel_a ? a_hash_start : (sel_se ? se_hash_start : (sel_top ? top_hash_start : 1'b0));
+assign hash_mode_mux  = sel_a ? a_hash_mode  : (sel_se ? se_hash_mode  : (sel_top ? 2'd2 : 2'd0)); // MODE_SHA3_256
+assign hash_seed_mux  = sel_a ? a_hash_seed  : (sel_se ? se_hash_seed  : (sel_top ? pk_hash_seed : 256'd0));
 assign hash_row_mux   = sel_a ? a_hash_row_idx : (sel_se ? se_hash_row_idx : 8'd0);
 assign hash_col_mux   = sel_a ? a_hash_col_idx : (sel_se ? se_hash_col_idx : 8'd0);
 assign hash_nonce_mux = sel_a ? a_hash_nonce : (sel_se ? se_hash_nonce : 8'd0);
-assign hash_stop_mux  = sel_a ? a_hash_stop_stream : (sel_se ? se_hash_stop_stream : 1'b0);
+assign hash_stop_mux  = sel_a ? a_hash_stop_stream : (sel_se ? se_hash_stop_stream : (sel_top ? top_hash_stop : 1'b0));
 //When in state ST_COMPUTE_AS or ST_WAIT_AS_DONE, read from mat_vec_mul module.
 assign a_rd_addr_mux = (state == ST_COMPUTE_AS || state == ST_WAIT_AS_DONE) ? mat_rd_addr : rd_addr;
 assign s_rd_addr_mux = (state == ST_COMPUTE_AS || state == ST_WAIT_AS_DONE) ? vec_rd_addr : rd_addr;
@@ -161,6 +225,10 @@ hash_unit u_hash_shared (
     .row_idx(hash_row_mux),
     .col_idx(hash_col_mux),
     .nonce(hash_nonce_mux),
+    .absorb_word_i(top_hash_absorb_word),
+    .absorb_valid_i(top_hash_absorb_valid),
+    .absorb_last_i(top_hash_absorb_last),
+    .absorb_ready_o(top_hash_absorb_ready),
     .stop_stream(hash_stop_mux),
     .busy(shared_hash_busy),
     .done(shared_hash_done),
@@ -182,6 +250,36 @@ mat_vec_mul u_mat_vec_mul (
     .out_wr_data(t_wr_data),
     .done(mat_vec_mul_done),
     .busy(mat_vec_mul_busy)
+);
+
+// t_mem: inferred Block RAM (must follow mat_vec_mul so t_wr_* are driven)
+wire [11:0] t_mem_rdata;
+wire [9:0]  t_pb_addr0;
+wire [9:0]  t_mem_raddr_i;
+wire        t_mem_we;
+wire [9:0]  t_mem_waddr;
+wire [11:0] t_mem_wdata;
+
+assign t_pb_addr0 = {1'b0, pk_pair_idx} << 1;
+assign t_mem_raddr_i =
+    (state == ST_BUILD_PK_PACK && pk_rho_idx >= 6'd32 && pk_t_phase == 3'd0) ? t_pb_addr0 :
+    (state == ST_BUILD_PK_PACK && pk_rho_idx >= 6'd32 &&
+        (pk_t_phase == 3'd2 || pk_t_phase == 3'd3 || pk_t_phase == 3'd4)) ? (t_pb_addr0 + 10'd1) :
+    (state == ST_ADD_E) ? rd_addr[9:0] :
+    (state == ST_BUILD_PK_PACK && pk_rho_idx >= 6'd32) ? t_pb_addr0 :
+    10'd0;
+
+assign t_mem_we     = t_wr_en | t_mem_add_we;
+assign t_mem_waddr  = t_wr_en ? t_wr_addr : rd_addr[9:0];
+assign t_mem_wdata  = t_wr_en ? t_wr_data : t_mem_wdata_reg;
+
+bram_sdp_12x768 u_t_mem (
+    .clk   (clk),
+    .we    (t_mem_we),
+    .waddr (t_mem_waddr),
+    .wdata (t_mem_wdata),
+    .raddr (t_mem_raddr_i),
+    .rdata (t_mem_rdata)
 );
 
 neoTRNG #(
@@ -211,21 +309,44 @@ always @(posedge clk) begin
         trng_en <= 1'b0;
         trng_cnt <= 7'd0;
         seed_a_reg <= 256'd0;
+        sigma_reg <= 256'd0;
         z_reg <= 256'd0;
+        top_hash_start <= 1'b0;
+        top_hash_stop <= 1'b0;
+        top_hash_word_ctr <= 3'd0;
+        hpk_reg <= 256'd0;
+        pk_rho_idx <= 6'd0;
+        pk_pair_idx <= 9'd0;
+        pk_wr_idx <= 11'd0;
+        top_hash_absorb_idx <= 9'd0;
+        sk_wr_idx <= 12'd0;
+        sk_s_pair_idx <= 9'd0;
+        sk_s_sub <= 2'd0;
+        sk_s_c0 <= 12'd0;
+        sk_copy_idx <= 11'd0;
+        keys_ready <= 1'b0;
+        add_e_phase <= 2'd0;
+        t_mem_wdata_reg <= 12'd0;
+        pk_t_phase <= 3'd0;
+        pk_tc0 <= 12'd0;
+        pk_tc1 <= 12'd0;
+        t_mem_add_we <= 1'b0;
     end else begin
-        if (t_wr_en)//handshake signal from mat_vec_mul module
-            t_mem[t_wr_addr] <= t_wr_data;
+        t_mem_add_we <= 1'b0;
 
         a_gen_start <= 1'b0; // default pulse-low
         se_gen_start <= 1'b0; // default pulse-low
         mat_vec_mul_start <= 1'b0; // default pulse-low
         top_done <= 1'b0;
         rd_valid <= 1'b0;
+        top_hash_start <= 1'b0;
+        top_hash_stop <= 1'b0;
 
         case (state)
             ST_IDLE: begin
                 rd_addr <= 12'd0;
                 if (top_start) begin
+                    keys_ready <= 1'b0;
                     state <= ST_TRNG_INIT;
                 end
             end
@@ -234,6 +355,7 @@ always @(posedge clk) begin
                 trng_en <= 1'b1;
                 trng_cnt <= 7'd0;
                 seed_a_reg <= 256'd0;
+                sigma_reg <= 256'd0;
                 z_reg <= 256'd0;
                 state <= ST_TRNG_COLLECT;
             end
@@ -241,12 +363,17 @@ always @(posedge clk) begin
             ST_TRNG_COLLECT: begin
                 trng_en <= 1'b1;
                 if (trng_valid) begin
-                    if (trng_cnt < 7'd32)
-                        seed_a_reg <= {seed_a_reg[247:0], trng_byte};
+                    if (trng_cnt < 7'd32) begin
+                        // Byte-addressed rho capture prevents shift-propagated X spread.
+                        sk[12'd1152 + trng_cnt[4:0]] <= trng_byte;
+                        seed_a_reg[trng_cnt*8 +: 8] <= trng_byte;
+                    end
+                    else if (trng_cnt < 7'd64)
+                        sigma_reg <= {sigma_reg[247:0], trng_byte};
                     else
                         z_reg <= {z_reg[247:0], trng_byte};
 
-                    if (trng_cnt == 7'd63) begin
+                    if (trng_cnt == 7'd95) begin
                         trng_en <= 1'b0;
                         a_gen_start <= 1'b1;
                         state <= ST_WAIT_A_GEN;
@@ -288,26 +415,193 @@ always @(posedge clk) begin
             ST_WAIT_AS_DONE: begin
                 if (mat_vec_mul_done) begin
                     rd_addr <= 12'd0;
+                    add_e_phase <= 2'd0;
                     state <= ST_ADD_E;
                 end
             end
 
             ST_ADD_E: begin
-                // Final t = A*s + e (mod q), one coeff per cycle.
-                t_mem[rd_addr] <= add_mod_q12(t_mem[rd_addr], e_mem_rd_data);
-                if (rd_addr == (E_COEFFS - 1'b1))
+                // Final t = A*s + e (mod q). e_mem and t_mem are registered reads (1-cycle latency).
+                case (add_e_phase)
+                    2'd0: add_e_phase <= 2'd1;
+                    2'd1: add_e_phase <= 2'd2;
+                    2'd2: begin
+                        t_mem_wdata_reg <= add_mod_q12(t_mem_rdata, e_mem_rd_data);
+                        add_e_phase <= 2'd3;
+                    end
+                    default: begin // 2'd3
+                        t_mem_add_we <= 1'b1;
+                        if (rd_addr == (E_COEFFS - 1'b1)) begin
+                            state <= ST_BUILD_PK_INIT;
+                            add_e_phase <= 2'd0;
+                        end else begin
+                            rd_addr <= rd_addr + 12'd1;
+                            add_e_phase <= 2'd0;
+                        end
+                    end
+                endcase
+            end
+
+            ST_BUILD_PK_INIT: begin
+                // pk[0:31] already captured directly during TRNG collection.
+                pk_rho_idx <= 6'd32;
+                pk_pair_idx <= 9'd0;
+                pk_wr_idx <= 11'd32;
+                pk_t_phase <= 3'd0;
+                state <= ST_BUILD_PK_PACK;
+            end
+
+            ST_BUILD_PK_PACK: begin
+                if (pk_rho_idx < 6'd32) begin
+                    sk[12'd1152 + pk_rho_idx] <= seed_a_reg[pk_rho_idx*8 +: 8];
+                    pk_rho_idx <= pk_rho_idx + 5'd1;
+                end else begin
+                    // Pack (c0,c1) from t_mem via BRAM read pipeline (pk_t_phase 0..5).
+                    case (pk_t_phase)
+                        3'd0: pk_t_phase <= 3'd1;
+                        3'd1: begin
+                            pk_tc0 <= t_mem_rdata;
+                            pk_t_phase <= 3'd2;
+                        end
+                        3'd2: pk_t_phase <= 3'd3;
+                        3'd3: pk_t_phase <= 3'd4;
+                        3'd4: begin
+                            pk_tc1 <= t_mem_rdata;
+                            pk_t_phase <= 3'd5;
+                        end
+                        default: begin // 3'd5
+                            sk[12'd1152 + pk_wr_idx] <= pk_tc0[7:0];
+                            sk[12'd1152 + pk_wr_idx + 11'd1] <= {pk_tc1[3:0], pk_tc0[11:8]};
+                            sk[12'd1152 + pk_wr_idx + 11'd2] <= pk_tc1[11:4];
+                            if (pk_pair_idx == 9'd383) begin
+                                state <= ST_HASH_PK_START;
+                            end else begin
+                                pk_pair_idx <= pk_pair_idx + 9'd1;
+                                pk_wr_idx <= pk_wr_idx + 11'd3;
+                                pk_t_phase <= 3'd0;
+                            end
+                        end
+                    endcase
+                end
+            end
+
+            ST_HASH_PK_START: begin
+                top_hash_word_ctr <= 3'd0;
+                hpk_reg <= 256'd0;
+                top_hash_absorb_idx <= 9'd0;
+                top_hash_start <= 1'b1; //tell hash_unit to use SHA3-256 mode
+                state <= ST_HASH_PK_ABSORB;
+            end
+
+            ST_HASH_PK_ABSORB: begin
+                if (top_hash_absorb_ready && top_hash_absorb_valid) begin
+                    if (top_hash_absorb_idx == (PK_WORDS - 9'd1))
+                        state <= ST_HASH_PK_STREAM;
+                    else
+                        top_hash_absorb_idx <= top_hash_absorb_idx + 9'd1;
+                end
+            end
+
+            ST_HASH_PK_STREAM: begin
+                if (shared_stream_valid) begin
+                    hpk_reg <= {hpk_reg[223:0], shared_stream_word};
+                    if (top_hash_word_ctr == 3'd7) begin
+                        top_hash_stop <= 1'b1;
+                        state <= ST_HASH_PK_WAIT_DONE;
+                    end else begin
+                        top_hash_word_ctr <= top_hash_word_ctr + 3'd1;
+                    end
+                end
+            end
+
+            ST_HASH_PK_WAIT_DONE: begin
+                if (shared_hash_done)
+                    state <= ST_BUILD_SK_INIT;
+            end
+
+            ST_BUILD_SK_INIT: begin
+                rd_addr <= 12'd0;
+                sk_wr_idx <= 12'd0;
+                sk_s_pair_idx <= 9'd0;
+                sk_s_sub <= 2'd0;
+                sk_copy_idx <= 11'd0;
+                state <= ST_BUILD_SK_S_PACK;
+            end
+
+            ST_BUILD_SK_S_PACK: begin
+                // Pack s: 768x12-bit -> 1152 bytes (s_mem has 1-cycle read latency)
+                case (sk_s_sub)
+                    2'd0: sk_s_sub <= 2'd1;
+                    2'd1: begin
+                        sk_s_c0 <= s_mem_rd_data;
+                        rd_addr <= rd_addr + 12'd1;
+                        sk_s_sub <= 2'd2;
+                    end
+                    2'd2: sk_s_sub <= 2'd3;
+                    default: begin
+                        sk[sk_wr_idx] <= sk_s_c0[7:0];
+                        sk[sk_wr_idx + 12'd1] <= {s_mem_rd_data[3:0], sk_s_c0[11:8]};
+                        sk[sk_wr_idx + 12'd2] <= s_mem_rd_data[11:4];
+                        sk_wr_idx <= sk_wr_idx + 12'd3;
+                        rd_addr <= rd_addr + 12'd1;
+                        if (sk_s_pair_idx == 9'd383) begin
+                            sk_copy_idx <= 11'd0;
+                            state <= ST_BUILD_SK_COPY_HPK;
+                        end else begin
+                            sk_s_pair_idx <= sk_s_pair_idx + 9'd1;
+                        end
+                        sk_s_sub <= 2'd0;
+                    end
+                endcase
+            end
+
+            ST_BUILD_SK_COPY_PK: begin
+                // PK already built directly into sk[1152:2335].
+                state <= ST_BUILD_SK_COPY_HPK;
+            end
+
+            ST_BUILD_SK_COPY_HPK: begin
+                sk[12'd2336 + sk_copy_idx] <= hpk_reg[sk_copy_idx*8 +: 8];
+                if (sk_copy_idx == 11'd31) begin
+                    sk_copy_idx <= 11'd0;
+                    state <= ST_BUILD_SK_COPY_Z;
+                end else begin
+                    sk_copy_idx <= sk_copy_idx + 11'd1;
+                end
+            end
+
+            ST_BUILD_SK_COPY_Z: begin
+                sk[12'd2368 + sk_copy_idx] <= z_reg[sk_copy_idx*8 +: 8];
+                if (sk_copy_idx == 11'd31)
                     state <= ST_DONE;
                 else
-                    rd_addr <= rd_addr + 12'd1;
+                    sk_copy_idx <= sk_copy_idx + 11'd1;
             end
 
             ST_DONE: begin
                 top_done <= 1'b1;
+                keys_ready <= 1'b1;
                 state <= ST_IDLE;
             end
 
             default: state <= ST_IDLE;
         endcase
+
+        // Byte-addressed readout for PK/SK after key generation completes.
+        if (out_rd_en && keys_ready) begin
+            rd_valid <= 1'b1;
+            if (out_rd_sk) begin
+                if (out_rd_addr < SK_BYTES)
+                    rd_data <= {4'd0, sk[out_rd_addr]};
+                else
+                    rd_data <= 12'd0;
+            end else begin
+                if (out_rd_addr < PK_BYTES)
+                    rd_data <= {4'd0, sk[12'd1152 + out_rd_addr]};
+                else
+                    rd_data <= 12'd0;
+            end
+        end
     end
 end
 

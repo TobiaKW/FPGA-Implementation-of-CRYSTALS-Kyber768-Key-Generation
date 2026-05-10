@@ -18,6 +18,10 @@ module hash_unit(
     input      [7:0]  row_idx,   // used by MODE_A_UNIFORM as i
     input      [7:0]  col_idx,   // used by MODE_A_UNIFORM as j
     input      [7:0]  nonce,     // used by MODE_NOISE
+    input      [31:0] absorb_word_i,  // streaming absorb word for MODE_SHA3_256
+    input             absorb_valid_i, // valid for absorb_word_i
+    input             absorb_last_i,  // marks final absorb word
+    output            absorb_ready_o, // high when hash_unit accepts absorb words
     input             stop_stream, // stop the stream
 
     output reg        busy,
@@ -86,6 +90,7 @@ wire        ofifo0_empty;
 wire        ofifo1_empty;
 wire [5:0]  squeeze_ctr;
 wire [7:0]  fifo_GENA_ctr;
+assign absorb_ready_o = (state == ST_ABSORB) && (mode_r == MODE_SHA3_256);
 
 hash_core_Server u_hash_core (
     .clk(clk),
@@ -211,7 +216,6 @@ always @(posedge clk) begin
             ST_ABSORB: begin
                 busy <= 1'b1;
                 ofifo_ena <= 1'b1;
-                ififo_wen <= 1'b1;
                 ififo_absorb <= 1'b0;
 
                 // MODE_A_UNIFORM and MODE_NOISE use 9-word absorb:
@@ -219,6 +223,7 @@ always @(posedge clk) begin
                 //   - noise: seed[0..7] + {0,0,0,nonce}
                 // SHA3 fixed modes use 8-word absorb: seed[0..7] only.
                 if (mode_r == MODE_A_UNIFORM || mode_r == MODE_NOISE) begin
+                    ififo_wen <= 1'b1;
                     if (absorb_word_ctr < 4'd8) begin
                         ififo_din <= seed[absorb_word_ctr*32 +: 32];
                     end else begin
@@ -236,9 +241,20 @@ always @(posedge clk) begin
                     end else begin
                         absorb_word_ctr <= absorb_word_ctr + 4'd1;
                     end
-                end else begin //SHA3 modes use 8-word absorb: seed[0..7] only.
+                end else if (mode_r == MODE_SHA3_256) begin
+                    if (absorb_valid_i) begin
+                        ififo_wen <= 1'b1;
+                        ififo_din <= absorb_word_i;
+                        ififo_last <= absorb_last_i;
+                        if (absorb_last_i) begin
+                            absorb_word_ctr <= 4'd0;
+                            ready_seen <= 1'b0;
+                            state <= ST_WAIT_READY;
+                        end
+                    end
+                end else begin // MODE_SHA3_512 fallback uses 8-word fixed absorb: seed[0..7].
+                    ififo_wen <= 1'b1;
                     ififo_din <= seed[absorb_word_ctr*32 +: 32];
-
                     if (absorb_word_ctr == 4'd7) begin
                         ififo_last <= 1'b1;
                         absorb_word_ctr <= 4'd0;
@@ -258,7 +274,7 @@ always @(posedge clk) begin
                     end else begin
                         extend <= 1'b0;
                     end
-                    sample_squeeze_ctr <= squeeze_ctr;
+                    sample_squeeze_ctr <= (mode_r == MODE_SHA3_256) ? 6'd0 : squeeze_ctr;
                     state <= ST_STREAM;
                 end
             end
@@ -266,17 +282,30 @@ always @(posedge clk) begin
             ST_STREAM: begin
                 busy <= 1'b1;
                 ofifo_ena <= 1'b1;
-                if (mode_r == MODE_A_UNIFORM || mode_r == MODE_NOISE) begin
-                    extend <= 1'b1;
+                if (mode_r == MODE_SHA3_256) begin
+                    if (stream_ready) begin
+                        stream_word <= keccak_dout;
+                        stream_valid <= 1'b1;
+                        if (sample_squeeze_ctr < 6'd7) begin
+                            extend <= 1'b1; // shift next digest word
+                            sample_squeeze_ctr <= sample_squeeze_ctr + 6'd1;
+                        end else begin
+                            extend <= 1'b0;
+                        end
+                    end
                 end else begin
-                    extend <= 1'b0;
-                end
+                    if (mode_r == MODE_A_UNIFORM || mode_r == MODE_NOISE) begin
+                        extend <= 1'b1;
+                    end else begin
+                        extend <= 1'b0;
+                    end
 
-                // Raw SHAKE stream output. Caller decides how many words to consume.
-                if ((squeeze_ctr != sample_squeeze_ctr) && stream_ready) begin
-                    sample_squeeze_ctr <= squeeze_ctr;
-                    stream_word <= keccak_dout;
-                    stream_valid <= 1'b1;
+                    // Raw SHAKE stream output. Caller decides how many words to consume.
+                    if ((squeeze_ctr != sample_squeeze_ctr) && stream_ready) begin
+                        sample_squeeze_ctr <= squeeze_ctr;
+                        stream_word <= keccak_dout;
+                        stream_valid <= 1'b1;
+                    end
                 end
 
                 // TODO: add a requested word count, or an explicit stop input.

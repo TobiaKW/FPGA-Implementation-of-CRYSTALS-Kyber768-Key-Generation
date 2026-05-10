@@ -92,9 +92,13 @@ module mat_vec_mul(
     reg [2:0] read_align_ctr;
     reg [7:0] write_idx;
     reg [7:0] acc_idx;
+    (* ram_style = "block" *)
     reg [11:0] poly_buf [0:N-1];
     reg [11:0] row_acc_buf [0:N-1];
-    integer lane_i;
+    // One BRAM write per cycle: latch full PE beat, scatter coeffs over 16 cycles.
+    reg [191:0] pe_dout_latch;
+    reg         poly_cap_have;
+    reg [3:0]   poly_cap_lane;
 
     KyberHPM16PE_top #(.PE_NUMBER(PE_NUMBER)) u_pe (
         .clk        (clk),
@@ -147,6 +151,9 @@ module mat_vec_mul(
             read_align_ctr <= 3'd0;
             write_idx <= 8'd0;
             acc_idx <= 8'd0;
+            poly_cap_have <= 1'b0;
+            poly_cap_lane <= 4'd0;
+            pe_dout_latch <= 192'd0;
 
             mat_rd_addr <= 12'd0;
             vec_rd_addr <= 12'd0;
@@ -229,12 +236,13 @@ module mat_vec_mul(
                     load_b_f <= 1'b1;
                     load_beat <= 5'd0;
                     load_base <= 9'd0;
+                    // s_mem is registered read: prime address one cycle before first din sample.
+                    vec_rd_addr <= (col_idx << 8);
                     state <= ST_LOAD_B_STREAM;
                 end
 
                 ST_LOAD_B_STREAM: begin
                     load_b_f <= 1'b0;
-                    vec_rd_addr <= (col_idx << 8) + load_base[7:0];
                     din <= {PE_NUMBER{vec_rd_data}};
                     if (load_beat == 5'd15) begin
                         state <= ST_FNTT_A_PULSE;
@@ -242,6 +250,7 @@ module mat_vec_mul(
                     end else begin
                         load_beat <= load_beat + 5'd1;
                         load_base <= load_base + 9'd16;
+                        vec_rd_addr <= (col_idx << 8) + (load_base + 9'd16);
                     end
                 end
 
@@ -322,6 +331,8 @@ module mat_vec_mul(
                     read_a <= 1'b0;
                     read_stream_ctr <= 6'd0;
                     read_align_ctr <= 3'd0;
+                    poly_cap_have <= 1'b0;
+                    poly_cap_lane <= 4'd0;
                     state <= ST_READ_STREAM;
                 end
 
@@ -330,15 +341,29 @@ module mat_vec_mul(
                     if (read_align_ctr < READ_DOUT_ALIGN) begin
                         read_align_ctr <= read_align_ctr + 3'd1;
                         read_stream_ctr <= 6'd0;
+                        poly_cap_have <= 1'b0;
+                        poly_cap_lane <= 4'd0;
+                    end else if (!poly_cap_have) begin
+                        pe_dout_latch <= {
+                            dout_lane[15], dout_lane[14], dout_lane[13], dout_lane[12],
+                            dout_lane[11], dout_lane[10], dout_lane[9], dout_lane[8],
+                            dout_lane[7], dout_lane[6], dout_lane[5], dout_lane[4],
+                            dout_lane[3], dout_lane[2], dout_lane[1], dout_lane[0]
+                        };
+                        poly_cap_have <= 1'b1;
+                        poly_cap_lane <= 4'd0;
                     end else begin
-                        // Capture all 16 lanes from each PE beat into a 256-coeff local buffer.
-                        for (lane_i = 0; lane_i < PE_NUMBER; lane_i = lane_i + 1)
-                            poly_buf[(read_stream_ctr * PE_NUMBER) + lane_i] <= dout_lane[lane_i];
-                        if (read_stream_ctr == (READ_STREAM_CYCLES - 6'd1)) begin
-                            acc_idx <= 8'd0;
-                            state <= ST_ACC_ROW;
+                        poly_buf[(read_stream_ctr << 4) + poly_cap_lane]
+                            <= pe_dout_latch[poly_cap_lane * 12 +: 12];
+                        if (poly_cap_lane == 4'd15) begin
+                            poly_cap_have <= 1'b0;
+                            if (read_stream_ctr == (READ_STREAM_CYCLES - 6'd1)) begin
+                                acc_idx <= 8'd0;
+                                state <= ST_ACC_ROW;
+                            end else
+                                read_stream_ctr <= read_stream_ctr + 6'd1;
                         end else
-                            read_stream_ctr <= read_stream_ctr + 6'd1;
+                            poly_cap_lane <= poly_cap_lane + 4'd1;
                     end
                 end
 
