@@ -8,8 +8,8 @@
 // - v[j][n]    -> (j << 8) + n
 // - y[i][n]    -> (i << 8) + n
 //
-// PE16 pipeline: LOAD_A/B -> FNTT_A -> FNTT_B -> PWM2 -> INTT
-// -> READ_A pulse + ST_READ_STREAM (capture 256 coeff) -> ACC_ROW -> WRITE.
+// PE1 pipeline: LOAD_A/B (256 cycles each) -> FNTT_A -> FNTT_B -> PWM2 -> INTT
+// -> READ_A pulse + ST_READ_STREAM (256 samples, PE1 bank interleave) -> ACC_ROW -> WRITE.
 module mat_vec_mul(
     input             clk,
     input             rst,
@@ -31,13 +31,12 @@ module mat_vec_mul(
     localparam K         = 3;
     localparam N         = 256;
     localparam Q         = 3329;
-    localparam PE_NUMBER = 16;
+    localparam PE_NUMBER = 1;
 
     // Outer loop: one coeff index at a time (placeholder until full per-column poly mult).
-    // Inner PE chain runs once per (row,col,coeff) step in this skeleton.
     localparam ST_IDLE           = 6'd0;
     localparam ST_SETADDR        = 6'd1;
-    // PE16 sequence (mirror ntt_pe16_tb intent)
+    // PE1 sequence (mirror KyberHPM1PE_test_ALL_FULL read order)
     localparam ST_LOAD_A_PULSE   = 6'd2;
     localparam ST_LOAD_A_STREAM  = 6'd3;
     localparam ST_LOAD_B_PULSE   = 6'd4;
@@ -52,7 +51,7 @@ module mat_vec_mul(
     localparam ST_INTT_WAIT      = 6'd13;
     // Idle after INTT (vendor TB uses gap before read_a; PE must be in OP_IDLE)
     localparam ST_READ_PRE       = 6'd14;
-    // read_a: registered inside KyberHPM16PE_top — separate HOLD so pulse is not swallowed
+    // read_a: registered inside KyberHPM1PE_top — separate HOLD so pulse is not swallowed
     localparam ST_READ_A_PULSE   = 6'd15;
     localparam ST_READ_A_HOLD    = 6'd16;
     localparam ST_READ_STREAM    = 6'd17;
@@ -65,7 +64,7 @@ module mat_vec_mul(
     reg [1:0] row_idx;
     reg [1:0] col_idx;
 
-    // PE16 datapath (KyberHPM16PE_top)
+    // PE1 datapath (KyberHPM1PE_top)
     reg        pe_reset;
     reg        load_a_f, load_a_i;
     reg        load_b_f, load_b_i;
@@ -74,33 +73,26 @@ module mat_vec_mul(
     reg        start_fntt, start_pwm2, start_intt;
     reg [12*PE_NUMBER-1:0] din;
     wire [12*PE_NUMBER-1:0] dout;
-    // Unpacked PE output lanes: dout_lane[0]..dout_lane[15]
-    wire [11:0] dout_lane [0:PE_NUMBER-1];
+    wire [11:0] dout_coeff;
     wire pe_done;
 
-    // Load streaming: 256 coeffs / 16 per cycle = 16 beats after first pulse
-    reg [4:0] load_beat;
-    reg [8:0] load_base;
+    // Load streaming: 256 coeffs, one per cycle (PE1)
+    reg [8:0] load_beat;
 
     reg [11:0] wait_ctr;
-    // Align visible stream counter with observed dout latency after read_a.
-    localparam READ_DOUT_ALIGN = 3'd4;
-    // Number of PE beats to capture: 16 beats * 16 coeff/beat = 256 coeff.
-    localparam READ_STREAM_CYCLES = 6'd16;
-    reg [5:0] read_stream_ctr;
+    // Align first valid dout after read_a (PE1 testbench uses ~2 idle cycles).
+    localparam READ_DOUT_ALIGN = 3'd6;
+    reg [8:0] read_stream_ctr;
     reg [1:0] read_pre_ctr;
     reg [2:0] read_align_ctr;
     reg [7:0] write_idx;
     reg [7:0] acc_idx;
     (* ram_style = "block" *)
     reg [11:0] poly_buf [0:N-1];
+    (* ram_style = "block" *)
     reg [11:0] row_acc_buf [0:N-1];
-    // One BRAM write per cycle: latch full PE beat, scatter coeffs over 16 cycles.
-    reg [191:0] pe_dout_latch;
-    reg         poly_cap_have;
-    reg [3:0]   poly_cap_lane;
 
-    KyberHPM16PE_top #(.PE_NUMBER(PE_NUMBER)) u_pe (
+    KyberHPM1PE_top #(.PE_NUMBER(PE_NUMBER)) u_pe (
         .clk        (clk),
         .reset      (pe_reset),
         .load_a_f   (load_a_f),
@@ -118,12 +110,7 @@ module mat_vec_mul(
         .done       (pe_done)
     );
 
-    genvar lane;
-    generate
-        for (lane = 0; lane < PE_NUMBER; lane = lane + 1) begin : G_DOUT_UNPACK
-            assign dout_lane[lane] = dout[lane*12 +: 12];
-        end
-    endgenerate
+    assign dout_coeff = dout[11:0];
 
     function [11:0] add_mod_q12;
         input [11:0] a;
@@ -143,17 +130,13 @@ module mat_vec_mul(
             state <= ST_IDLE;
             row_idx <= 2'd0;
             col_idx <= 2'd0;
-            load_beat <= 5'd0;
-            load_base <= 9'd0;
+            load_beat <= 9'd0;
             wait_ctr <= 12'd0;
-            read_stream_ctr <= 6'd0;
+            read_stream_ctr <= 9'd0;
             read_pre_ctr <= 2'd0;
             read_align_ctr <= 3'd0;
             write_idx <= 8'd0;
             acc_idx <= 8'd0;
-            poly_cap_have <= 1'b0;
-            poly_cap_lane <= 4'd0;
-            pe_dout_latch <= 192'd0;
 
             mat_rd_addr <= 12'd0;
             vec_rd_addr <= 12'd0;
@@ -174,7 +157,7 @@ module mat_vec_mul(
             start_fntt <= 1'b0;
             start_pwm2 <= 1'b0;
             start_intt <= 1'b0;
-            din <= { (12*PE_NUMBER) {1'b0} };
+            din <= 12'd0;
         end else begin
             out_wr_en <= 1'b0;
             done <= 1'b0;
@@ -194,8 +177,7 @@ module mat_vec_mul(
                 ST_IDLE: begin
                     busy <= 1'b0;
                     wait_ctr <= 12'd0;
-                    load_beat <= 5'd0;
-                    load_base <= 9'd0;
+                    load_beat <= 9'd0;
                     row_idx <= 2'd0;
                     col_idx <= 2'd0;
                     if (start) begin
@@ -213,29 +195,25 @@ module mat_vec_mul(
 
                 ST_LOAD_A_PULSE: begin
                     load_a_f <= 1'b1;
-                    load_beat <= 5'd0;
-                    load_base <= 9'd0;
+                    load_beat <= 9'd0;
                     state <= ST_LOAD_A_STREAM;
                 end
 
                 ST_LOAD_A_STREAM: begin
                     load_a_f <= 1'b0;
-                    // Area-first placeholder: broadcast one fetched coeff to all lanes.
-                    mat_rd_addr <= (((row_idx * K) + col_idx) << 8) + load_base[7:0];
-                    din <= {PE_NUMBER{mat_rd_data}};
-                    if (load_beat == 5'd15) begin
-                        load_beat <= 5'd0;
+                    mat_rd_addr <= (((row_idx * K) + col_idx) << 8) + load_beat;
+                    din <= mat_rd_data;
+                    if (load_beat == 9'd255) begin
+                        load_beat <= 9'd0;
                         state <= ST_LOAD_B_PULSE;
                     end else begin
-                        load_beat <= load_beat + 5'd1;
-                        load_base <= load_base + 9'd16;
+                        load_beat <= load_beat + 9'd1;
                     end
                 end
 
                 ST_LOAD_B_PULSE: begin
                     load_b_f <= 1'b1;
-                    load_beat <= 5'd0;
-                    load_base <= 9'd0;
+                    load_beat <= 9'd0;
                     // s_mem is registered read: prime address one cycle before first din sample.
                     vec_rd_addr <= (col_idx << 8);
                     state <= ST_LOAD_B_STREAM;
@@ -243,14 +221,13 @@ module mat_vec_mul(
 
                 ST_LOAD_B_STREAM: begin
                     load_b_f <= 1'b0;
-                    din <= {PE_NUMBER{vec_rd_data}};
-                    if (load_beat == 5'd15) begin
+                    din <= vec_rd_data;
+                    if (load_beat == 9'd255) begin
                         state <= ST_FNTT_A_PULSE;
                         wait_ctr <= 12'd0;
                     end else begin
-                        load_beat <= load_beat + 5'd1;
-                        load_base <= load_base + 9'd16;
-                        vec_rd_addr <= (col_idx << 8) + (load_base + 9'd16);
+                        load_beat <= load_beat + 9'd1;
+                        vec_rd_addr <= (col_idx << 8) + (load_beat + 9'd1);
                     end
                 end
 
@@ -314,7 +291,7 @@ module mat_vec_mul(
                         wait_ctr <= wait_ctr + 12'd1;
                 end
 
-                // Match ntt_pe16_tb / KyberHPM16PE_test_ALL_FULL: brief idle in OP_IDLE before read_a
+                // Match KyberHPM1PE_test_ALL_FULL: brief idle in OP_IDLE before read_a
                 ST_READ_PRE: begin
                     if (read_pre_ctr == 2'd1)
                         state <= ST_READ_A_PULSE;
@@ -329,41 +306,25 @@ module mat_vec_mul(
 
                 ST_READ_A_HOLD: begin
                     read_a <= 1'b0;
-                    read_stream_ctr <= 6'd0;
+                    read_stream_ctr <= 9'd0;
                     read_align_ctr <= 3'd0;
-                    poly_cap_have <= 1'b0;
-                    poly_cap_lane <= 4'd0;
                     state <= ST_READ_STREAM;
                 end
 
-                // Delay counter start to align with first non-zero/non-X dout beat in this integration.
+                // 256 cycles: dout order matches KyberHPM1PE_test_ALL_FULL (m then m+128 pairs).
                 ST_READ_STREAM: begin
                     if (read_align_ctr < READ_DOUT_ALIGN) begin
                         read_align_ctr <= read_align_ctr + 3'd1;
-                        read_stream_ctr <= 6'd0;
-                        poly_cap_have <= 1'b0;
-                        poly_cap_lane <= 4'd0;
-                    end else if (!poly_cap_have) begin
-                        pe_dout_latch <= {
-                            dout_lane[15], dout_lane[14], dout_lane[13], dout_lane[12],
-                            dout_lane[11], dout_lane[10], dout_lane[9], dout_lane[8],
-                            dout_lane[7], dout_lane[6], dout_lane[5], dout_lane[4],
-                            dout_lane[3], dout_lane[2], dout_lane[1], dout_lane[0]
-                        };
-                        poly_cap_have <= 1'b1;
-                        poly_cap_lane <= 4'd0;
-                    end else begin
-                        poly_buf[(read_stream_ctr << 4) + poly_cap_lane]
-                            <= pe_dout_latch[poly_cap_lane * 12 +: 12];
-                        if (poly_cap_lane == 4'd15) begin
-                            poly_cap_have <= 1'b0;
-                            if (read_stream_ctr == (READ_STREAM_CYCLES - 6'd1)) begin
-                                acc_idx <= 8'd0;
-                                state <= ST_ACC_ROW;
-                            end else
-                                read_stream_ctr <= read_stream_ctr + 6'd1;
+                        read_stream_ctr <= 9'd0;
+                    end else if (read_stream_ctr < 9'd256) begin
+                        poly_buf[(read_stream_ctr[0]) ? (8'd128 + read_stream_ctr[8:1])
+                                                       : {1'b0, read_stream_ctr[8:1]}]
+                            <= dout_coeff;
+                        if (read_stream_ctr == 9'd255) begin
+                            acc_idx <= 8'd0;
+                            state <= ST_ACC_ROW;
                         end else
-                            poly_cap_lane <= poly_cap_lane + 4'd1;
+                            read_stream_ctr <= read_stream_ctr + 9'd1;
                     end
                 end
 
