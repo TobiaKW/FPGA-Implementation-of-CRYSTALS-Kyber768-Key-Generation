@@ -5,7 +5,6 @@ module topserver_tb;
 reg         clk;
 reg         rst;
 reg         top_start;
-reg [255:0] seed_a;
 reg         out_rd_en;
 reg         out_rd_sk;
 reg [11:0]  out_rd_addr;
@@ -21,7 +20,6 @@ topserver dut (
     .clk(clk),
     .rst(rst),
     .top_start(top_start),
-    .seed_a(seed_a),
     .out_rd_en(out_rd_en),
     .out_rd_sk(out_rd_sk),
     .out_rd_addr(out_rd_addr),
@@ -37,7 +35,6 @@ initial begin
     clk = 1'b0;
     rst = 1'b1;
     top_start = 1'b0;
-    seed_a = 256'h2D7F7336_9973CD2D_0348B1CC_251AD82F_DD1A6BDB_E4106D0C_AA9476B0_A035997C;
     out_rd_en = 1'b0;
     out_rd_sk = 1'b0;
     out_rd_addr = 12'd0;

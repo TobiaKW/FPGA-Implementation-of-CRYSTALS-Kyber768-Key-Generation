@@ -4,7 +4,6 @@ module topserver(
     input             clk,
     input             rst,
     input             top_start,
-    input  [255:0]    seed_a,
     input             out_rd_en,
     input             out_rd_sk,      // 0: pk, 1: sk
     input  [11:0]     out_rd_addr,    // byte address
