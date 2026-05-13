@@ -2,6 +2,7 @@
 
 // Shared noise generator for s and e.
 // DEMO ONLY: deterministic lightweight filler, not Kyber-compliant CBD/PRF.
+(* keep_hierarchy = "yes", dont_touch = "yes" *)
 module se_gen(
     input              clk,
     input              rst,
@@ -12,8 +13,8 @@ module se_gen(
     input      [11:0]  e_mem_rd_addr,
     output reg         gen_done,
     output reg         busy,
-    output reg  [11:0] s_mem_rd_data,
-    output reg  [11:0] e_mem_rd_data,
+    output wire [11:0] s_mem_rd_data,
+    output wire [11:0] e_mem_rd_data,
     // Shared hash_unit interface
     output             hash_start_o,
     output      [1:0]  hash_mode_o,
@@ -27,11 +28,6 @@ module se_gen(
     input              hash_stream_valid_i
 );
 
-localparam KYBER_K  = 3;
-localparam POLY_N   = 256;
-localparam S_COEFFS = KYBER_K * POLY_N;
-localparam E_COEFFS = KYBER_K * POLY_N;
-
 localparam ST_IDLE           = 3'd0;
 localparam ST_FILL           = 3'd1;
 localparam ST_DONE           = 3'd3;
@@ -39,23 +35,59 @@ localparam ST_DONE           = 3'd3;
 reg [2:0] state;
 reg       is_e_r;
 reg [9:0] coeff_count;
-(* ram_style = "block" *)
-reg [11:0] S_mem [0:S_COEFFS-1];
-(* ram_style = "block" *)
-reg [11:0] E_mem [0:E_COEFFS-1];
 
 reg [15:0] lfsr;
 wire       lfsr_fb;
-reg [2:0] raw3;
-reg [2:0] rem5;
-reg signed [3:0] coeff_s;
 
-// Registered read address (1-cycle latency). Reads are in a separate always
-// block from writes so BRAM inference does not pick up huge bypass muxes.
-reg [11:0] s_mem_rd_addr_r;
-reg [11:0] e_mem_rd_addr_r;
+wire       s_mem_we = (state == ST_FILL) && !is_e_r;
+wire       e_mem_we = (state == ST_FILL) && is_e_r;
+wire [9:0] s_mem_waddr = coeff_count;
+wire [9:0] e_mem_waddr = coeff_count;
+wire [11:0] s_mem_wdata = coeff_from_raw3(lfsr[2:0]);
+wire [11:0] e_mem_wdata = coeff_from_raw3(lfsr[2:0]);
 
 assign lfsr_fb = lfsr[15] ^ lfsr[13] ^ lfsr[12] ^ lfsr[10];
+
+(* keep_hierarchy = "yes", dont_touch = "yes" *)
+se_gen_s_mem_dp12 u_s_mem (
+    .clk   (clk),
+    .we    (s_mem_we),
+    .waddr (s_mem_waddr),
+    .wdata (s_mem_wdata),
+    .raddr (s_mem_rd_addr[9:0]),
+    .rdata (s_mem_rd_data)
+);
+
+(* keep_hierarchy = "yes", dont_touch = "yes" *)
+se_gen_s_mem_dp12 u_e_mem (
+    .clk   (clk),
+    .we    (e_mem_we),
+    .waddr (e_mem_waddr),
+    .wdata (e_mem_wdata),
+    .raddr (e_mem_rd_addr[9:0]),
+    .rdata (e_mem_rd_data)
+);
+
+function [11:0] coeff_from_raw3;
+    input [2:0] raw3;
+    reg [2:0] rem5;
+    reg signed [3:0] coeff_s;
+begin
+    case (raw3)
+        3'd0: rem5 = 3'd0;
+        3'd1: rem5 = 3'd1;
+        3'd2: rem5 = 3'd2;
+        3'd3: rem5 = 3'd3;
+        3'd4: rem5 = 3'd4;
+        3'd5: rem5 = 3'd0;
+        3'd6: rem5 = 3'd1;
+        default: rem5 = 3'd2;
+    endcase
+
+    coeff_s = $signed({1'b0, rem5}) - 4'sd2;
+    coeff_from_raw3 = {{8{coeff_s[3]}}, coeff_s};
+end
+endfunction
 
 // In demo mode se_gen does not consume the shared hash unit.
 assign hash_start_o = 1'b0;
@@ -74,15 +106,8 @@ always @(posedge clk) begin
         lfsr <= 16'h1ACE;
         gen_done <= 1'b0;
         busy <= 1'b0;
-        s_mem_rd_addr_r <= 12'd0;
-        e_mem_rd_addr_r <= 12'd0;
-        s_mem_rd_data <= 12'd0;
-        e_mem_rd_data <= 12'd0;
     end else begin
         gen_done <= 1'b0;
-
-        s_mem_rd_addr_r <= s_mem_rd_addr;
-        e_mem_rd_addr_r <= e_mem_rd_addr;
 
         case (state)
             ST_IDLE: begin
@@ -104,24 +129,6 @@ always @(posedge clk) begin
 
             ST_FILL: begin
                 busy <= 1'b1;
-                raw3 = lfsr[2:0];
-                case (raw3)
-                    3'd0: rem5 = 3'd0;
-                    3'd1: rem5 = 3'd1;
-                    3'd2: rem5 = 3'd2;
-                    3'd3: rem5 = 3'd3;
-                    3'd4: rem5 = 3'd4;
-                    3'd5: rem5 = 3'd0;
-                    3'd6: rem5 = 3'd1;
-                    default: rem5 = 3'd2;
-                endcase
-
-                coeff_s = $signed({1'b0, rem5}) - 4'sd2;
-                if (is_e_r)
-                    E_mem[coeff_count] <= {{8{coeff_s[3]}}, coeff_s};
-                else
-                    S_mem[coeff_count] <= {{8{coeff_s[3]}}, coeff_s};
-
                 lfsr <= {lfsr[14:0], lfsr_fb};
                 if (coeff_count == 10'd767) begin
                     state <= ST_DONE;
@@ -141,17 +148,28 @@ always @(posedge clk) begin
     end
 end
 
-// Separate read port: avoids read+write in the same always block as the sampler
-// (which otherwise explodes LUT glue around inferred BRAM).
-always @(posedge clk) begin
-    if (rst) begin
-        s_mem_rd_data <= 12'd0;
-        e_mem_rd_data <= 12'd0;
-    end else begin
-        s_mem_rd_data <= S_mem[s_mem_rd_addr_r];
-        e_mem_rd_data <= E_mem[e_mem_rd_addr_r];
-    end
-end
-
 endmodule
 
+// Local 12x768 SDP BRAM (same behavior as bram_sdp_12x768.v) so packaged IP only
+// needs se_gen.v; keep_hierarchy preserves u_s_mem / u_e_mem in implementation netlist.
+(* keep_hierarchy = "yes", dont_touch = "yes" *)
+module se_gen_s_mem_dp12 (
+    input  wire         clk,
+    input  wire         we,
+    input  wire  [9:0]  waddr,
+    input  wire  [11:0] wdata,
+    input  wire  [9:0]  raddr,
+    output reg   [11:0] rdata
+);
+    (* ram_style = "block" *)
+    reg [11:0] mem [0:767];
+
+    reg [9:0] raddr_r;
+
+    always @(posedge clk) begin
+        if (we)
+            mem[waddr] <= wdata;
+        raddr_r <= raddr;
+        rdata   <= mem[raddr_r];
+    end
+endmodule

@@ -85,7 +85,7 @@ wire        top_hash_absorb_valid;
 wire        top_hash_absorb_last;
 reg [11:0]  sk_wr_idx;
 reg [8:0]   sk_s_pair_idx;
-reg [1:0]   sk_s_sub; // S_PACK: 0 wait, 1 latch c0, 2 wait c1, 3 write 3 bytes
+reg [2:0]   sk_s_sub; // S_PACK: 0->1 wait, 2 latch c0+rd++, 3 wait BRAM, 4/5/6 one byte each
 reg [11:0]  sk_s_c0;
 reg [10:0]  sk_copy_idx;
 reg         keys_ready;
@@ -320,7 +320,7 @@ always @(posedge clk) begin
         top_hash_absorb_idx <= 9'd0;
         sk_wr_idx <= 12'd0;
         sk_s_pair_idx <= 9'd0;
-        sk_s_sub <= 2'd0;
+        sk_s_sub <= 3'd0;
         sk_s_c0 <= 12'd0;
         sk_copy_idx <= 11'd0;
         keys_ready <= 1'b0;
@@ -522,24 +522,31 @@ always @(posedge clk) begin
                 rd_addr <= 12'd0;
                 sk_wr_idx <= 12'd0;
                 sk_s_pair_idx <= 9'd0;
-                sk_s_sub <= 2'd0;
+                sk_s_sub <= 3'd0;
                 sk_copy_idx <= 11'd0;
                 state <= ST_BUILD_SK_S_PACK;
             end
 
             ST_BUILD_SK_S_PACK: begin
-                // Pack s: 768x12-bit -> 1152 bytes (s_mem has 1-cycle read latency)
+                // Pack s: 768x12-bit -> 1152 bytes (BRAM read latency + one sk[] write/cycle for reliable inference)
                 case (sk_s_sub)
-                    2'd0: sk_s_sub <= 2'd1;
-                    2'd1: begin
+                    3'd0: sk_s_sub <= 3'd1;
+                    3'd1: sk_s_sub <= 3'd2;
+                    3'd2: begin
                         sk_s_c0 <= s_mem_rd_data;
                         rd_addr <= rd_addr + 12'd1;
-                        sk_s_sub <= 2'd2;
+                        sk_s_sub <= 3'd3;
                     end
-                    2'd2: sk_s_sub <= 2'd3;
-                    default: begin
+                    3'd3: sk_s_sub <= 3'd4;
+                    3'd4: begin
                         sk[sk_wr_idx] <= sk_s_c0[7:0];
+                        sk_s_sub <= 3'd5;
+                    end
+                    3'd5: begin
                         sk[sk_wr_idx + 12'd1] <= {s_mem_rd_data[3:0], sk_s_c0[11:8]};
+                        sk_s_sub <= 3'd6;
+                    end
+                    3'd6: begin
                         sk[sk_wr_idx + 12'd2] <= s_mem_rd_data[11:4];
                         sk_wr_idx <= sk_wr_idx + 12'd3;
                         rd_addr <= rd_addr + 12'd1;
@@ -549,8 +556,9 @@ always @(posedge clk) begin
                         end else begin
                             sk_s_pair_idx <= sk_s_pair_idx + 9'd1;
                         end
-                        sk_s_sub <= 2'd0;
+                        sk_s_sub <= 3'd0;
                     end
+                    default: sk_s_sub <= 3'd0;
                 endcase
             end
 
