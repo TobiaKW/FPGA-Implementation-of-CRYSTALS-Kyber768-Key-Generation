@@ -1,3 +1,4 @@
+// unused module
 `timescale 1ns / 1ps
 
 module e_gen(
