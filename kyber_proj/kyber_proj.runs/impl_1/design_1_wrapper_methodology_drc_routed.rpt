@@ -1,0 +1,152 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.2.1 (win64) Build 6403652 Thu Mar 19 19:48:24 GMT 2026
+| Date         : Wed May 13 18:13:31 2026
+| Host         : Tobia running 64-bit major release  (build 9200)
+| Command      : report_methodology -file design_1_wrapper_methodology_drc_routed.rpt -pb design_1_wrapper_methodology_drc_routed.pb -rpx design_1_wrapper_methodology_drc_routed.rpx
+| Design       : design_1_wrapper
+| Device       : xc7z020clg484-1
+| Speed File   : -1
+| Design State : Fully Routed
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Report Methodology
+
+Table of Contents
+-----------------
+1. REPORT SUMMARY
+2. REPORT DETAILS
+
+1. REPORT SUMMARY
+-----------------
+            Netlist: netlist
+          Floorplan: design_1
+      Design limits: <entire design considered>
+             Max checks: <unlimited>
+             Checks found: 23
++-----------+----------+-------------------------------------------+--------+
+| Rule      | Severity | Description                               | Checks |
++-----------+----------+-------------------------------------------+--------+
+| TIMING-20 | Warning  | Non-clocked latch                         | 21     |
+| ULMTCS-2  | Warning  | Control Sets use limits require reduction | 1      |
+| LATCH-1   | Advisory | Existing latches in the design            | 1      |
++-----------+----------+-------------------------------------------+--------+
+
+2. REPORT DETAILS
+-----------------
+TIMING-20#1 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[0].neoTRNG_cell_inst/ring_osc_gen[0].latch_reg[0] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[0].neoTRNG_cell_inst/ring_osc_gen[0].latch_reg[0]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#2 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[0].neoTRNG_cell_inst/ring_osc_gen[1].latch_reg[1] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[0].neoTRNG_cell_inst/ring_osc_gen[1].latch_reg[1]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#3 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[0].neoTRNG_cell_inst/ring_osc_gen[2].latch_reg[2] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[0].neoTRNG_cell_inst/ring_osc_gen[2].latch_reg[2]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#4 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[0].neoTRNG_cell_inst/ring_osc_gen[3].latch_reg[3] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[0].neoTRNG_cell_inst/ring_osc_gen[3].latch_reg[3]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#5 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[0].neoTRNG_cell_inst/ring_osc_gen[4].latch_reg[4] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[0].neoTRNG_cell_inst/ring_osc_gen[4].latch_reg[4]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#6 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[0].latch_reg[0] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[0].latch_reg[0]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#7 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[1].latch_reg[1] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[1].latch_reg[1]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#8 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[2].latch_reg[2] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[2].latch_reg[2]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#9 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[3].latch_reg[3] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[3].latch_reg[3]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#10 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[4].latch_reg[4] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[4].latch_reg[4]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#11 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[5].latch_reg[5] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[5].latch_reg[5]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#12 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[6].latch_reg[6] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[1].neoTRNG_cell_inst/ring_osc_gen[6].latch_reg[6]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#13 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[0].latch_reg[0] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[0].latch_reg[0]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#14 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[1].latch_reg[1] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[1].latch_reg[1]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#15 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[2].latch_reg[2] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[2].latch_reg[2]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#16 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[3].latch_reg[3] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[3].latch_reg[3]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#17 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[4].latch_reg[4] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[4].latch_reg[4]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#18 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[5].latch_reg[5] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[5].latch_reg[5]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#19 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[6].latch_reg[6] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[6].latch_reg[6]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#20 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[7].latch_reg[7] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[7].latch_reg[7]/G is not reached by a timing clock
+Related violations: <none>
+
+TIMING-20#21 Warning
+Non-clocked latch  
+The latch design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[8].latch_reg[8] cannot be properly analyzed as its control pin design_1_i/topserver_axi_0/inst/u_topserver/u_trng/entropy_cell_gen[2].neoTRNG_cell_inst/ring_osc_gen[8].latch_reg[8]/G is not reached by a timing clock
+Related violations: <none>
+
+ULMTCS-2#1 Warning
+Control Sets use limits require reduction  
+This design uses 2852 control sets (vs. available limit of 13300, determined by 1 control set per CLB). This exceeds the control set use guideline of 15 percent. This is at a level where reduction is REQUIRED (see UG949). Use report_control_sets to get more details.
+Related violations: <none>
+
+LATCH-1#1 Advisory
+Existing latches in the design  
+There are 21 latches found in the design. Inferred latches are often the result of HDL coding mistakes, such as incomplete if or case statements.
+Related violations: <none>
+
+

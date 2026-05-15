@@ -1,0 +1,21 @@
+vhdl xil_defaultlib  \
+"../../../bd/design_1/ip/design_1_axi_smc_1/bd_0/ip/ip_1/sim/bd_6f02_psr_aclk_0.vhd" \
+"../../../bd/design_1/ip/design_1_rst_ps7_0_50M_1/sim/design_1_rst_ps7_0_50M_1.vhd" \
+
+vhdl fifo_generator_v13_2_14  \
+"../../../../kyber_proj.gen/sources_1/bd/design_1/ip/design_1_topserver_axi_0_8/src/fifo_generator_8/hdl/fifo_generator_v13_2_rfs.vhd" \
+
+vhdl xil_defaultlib  \
+"../../../bd/design_1/ipshared/970e/src/Keccak1600.vhd" \
+"../../../bd/design_1/ipshared/970e/src/RegisterFDRE.vhd" \
+"../../../bd/design_1/ipshared/970e/src/Round.vhd" \
+"../../../bd/design_1/ipshared/970e/src/StateMachine.vhd" \
+"../../../bd/design_1/ipshared/970e/src/chi.vhd" \
+"../../../bd/design_1/ipshared/970e/src/iota.vhd" \
+"../../../bd/design_1/ipshared/970e/src/neoTRNG.vhd" \
+"../../../bd/design_1/ipshared/970e/src/pi.vhd" \
+"../../../bd/design_1/ipshared/970e/src/rho.vhd" \
+"../../../bd/design_1/ipshared/970e/src/theta.vhd" \
+
+# Do not sort compile order
+nosort
