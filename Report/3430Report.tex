@@ -256,7 +256,7 @@ The original full three-server goal was not met; keygen only was delivered in ha
 \subsection{Difficulties and bottlenecks}
 
 \subsubsection{LUT over-utilisation.}
-The ZedBoard offers about 53k LUTs; operating too close to the limit worsens routing and runtime (e.g.\ $\sim$50k LUTs leading to multi-hour implementation and poor slack).
+The ZedBoard offers about 53k LUTs; operating too close to the limit worsens routing and runtime (e.g.\ $\sim$50k LUTs leading to multi-hour implementation and poor slack). The final implementation is at about 48k LUTs, which is close to the limit.
 
 \begin{figure}[H]
   \centering
@@ -288,7 +288,7 @@ The ZedBoard offers about 53k LUTs; operating too close to the limit worsens rou
 \medskip
 \noindent \textbf{4. Large arrays.}
 
-\noindent $\mathbf{A}$, $\mathbf{s}$, $\mathbf{e}$, $H(\mathrm{pk})$, \texttt{sk}, etc.\ are stored in \textbf{BRAM} inside modules with explicit read ports (12-bit read granularity $\Rightarrow$ software or FSM loops for full byte streams).
+\noindent $\mathbf{A}$, $\mathbf{s}$, $\mathbf{e}$, $H(\mathrm{pk})$, \texttt{sk}, etc.\ are stored in \textbf{BRAM} inside modules with explicit read ports (12-bit read granularity $\Rightarrow$ software or FSM loops for full byte streams) in order to reduce the LUT usage.
 
 \medskip
 \noindent \textbf{5. Routing congestion.}
