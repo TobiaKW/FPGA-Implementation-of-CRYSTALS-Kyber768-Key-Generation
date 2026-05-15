@@ -1,0 +1,325 @@
+% 3430 Project Report — Kyber-style keygen on FPGA
+% Compile: pdflatex (twice if using cross-refs)
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=20mm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue, citecolor=blue}
+
+\title{Final Project: FPGA Implementation of CRYSTALS-Kyber Key Generation}
+\author{Wong Cheuk Yin \quad Student ID: 1155192671}
+\date{\today}
+
+\begin{document}
+
+% --- Page 1: title only ---
+\makeatletter
+\begin{titlepage}
+  \centering
+  \null\vspace*{1.5cm}
+  {\large The Chinese University of Hong Kong\par}
+  \vspace{1em}
+  {\large CENG3430 Rapid Prototyping of Digital Systems\par}
+  \vspace{3cm}
+  {\LARGE\bfseries Final Project---FPGA Implementation of CRYSTALS-Kyber Key Generation\par}
+  \vspace{2em}
+  {\large\@author\par}
+  \vspace{1em}
+  {\large\@date\par}
+  \vfill
+  {\normalsize Source code available on GitHub:\par}
+  \vspace{0.5em}
+  {\small\url{https://github.com/TobiaKW/FPGA-Implemented-CRYSTALS-Kyber768-Key-Generation}\par}
+  \vspace*{1.5cm}
+  \thispagestyle{empty}
+\end{titlepage}
+\makeatother
+
+% --- Page 2: table of contents ---
+{\noindent\large\textbf{CENG3430 Final Project} \hfill Wong Cheuk Yin 1155192671 \hfill \today}
+\vspace{0.5em}
+\hrule
+\vspace{0.5em}
+\tableofcontents
+\clearpage
+
+\newpage
+{\noindent\large\textbf{CENG3430 Final Project} \hfill Wong Cheuk Yin 1155192671 \hfill \today}
+\vspace{0.5em}
+\hrule
+\vspace{0.5em}
+\section{Introduction}
+
+\subsection{System goal and motivation}
+Since it is a open topic project, I would like to design a system that can utilized the Logic resources of 
+FPGA and the strength of PL compared to software. Post-quantum cryptography (PQC) is a natural fit because 
+higher algorithmic complexity can amplify the benefit of hardware acceleration. Among PQC schemes, 
+\textbf{CRYSTALS-Kyber} (KEM) was chosen because it is widely deployed, the RTL structure is relatively approachable,
+ and reference material and open-source Kyber-related hardware exist online.
+
+\subsection{Scope}
+The initial plan was three servers---keygen, encapsulation, and decapsulation---using open-source blocks. Device LUT capacity on the ZedBoard proved insufficient for that breadth, so the project was narrowed to a \textbf{single server: key generation only}.
+
+\section{Design}
+
+\subsection{Overview}
+The mathematical target of this keygen algorithm is:
+\[
+  \mathbf{t} = \mathbf{A} \cdot \mathbf{s} + \mathbf{e} \pmod{3329}
+\]
+
+\[
+  \mathrm{pk} = (\rho \ || \ \mathbf{t})
+\]
+
+\[
+  \mathrm{sk} = (\mathbf{s} \ || \ \mathrm{pk} \ || \ H(\mathrm{pk}) \ || \ z).
+\]
+
+\noindent TRNG engine generates $\rho$, $\sigma$, $z$ as the seeds for the keygen algorithm. \\
+$\mathbf{A}$ is a 3x3 matrix of polynomials , with every element is a polynomial of degree 255 with coefficients in range [0, 3328]. \\
+$\mathbf{s}$, $\mathbf{e}$ are 3x1 noise vectors, with every element is a polynomial of degree 255 with coefficients in range [-2, 2]. \\
+$\mathrm{pk}$ and $\mathrm{sk}$ are the public and secret keys respectively, which are the output of the keygen algorithm.
+
+\subsection{External modules adopted}
+\subsubsection{neoTRNG}
+[1] Outputs one random byte per valid cycle from on-chip entropy; drive it with clock and reset, assert \texttt{enable\_i}, and latch \texttt{data\_o} when \texttt{valid\_o} is high.
+It is used in \texttt{topserver} during the TRNG states to collect $\rho$, $\sigma$, and $z$.
+
+\subsubsection{Hash Server}
+[2] \texttt{hash\_core\_Server.v} implements the Keccak sponge with FIFOs for SHAKE128 squeeze, SHA3-256 digest, and related modes.
+\texttt{hash\_unit} asserts \texttt{start}, selects \texttt{mode}, and runs absorb/stream handshakes on the wrapper FSM.
+The same core is shared from \texttt{hash\_unit} by \texttt{a\_gen} (matrix expansion) and \texttt{topserver} (hash of the packed public key).
+
+\subsubsection{kyber-polmul-hw}
+[3] Performs 255-degree polynomial multiplication in the ring $R_q$ (mod 3329) inside NTT domain. Any degree higher than 255 is folded into the lower degrees with the rule of $x^{256} = -1$.
+Used in \texttt{mat\_vec\_mul}: load matrix and vector coefficients, pulse the PE stages, and wait on \texttt{pe\_done} as its own FSM defines.
+Performs $\mathbf{A} \cdot \mathbf{s}$ in the keygen datapath.
+
+\subsubsection{Simulation waveforms}
+\noindent The following screenshots illustrate post-RTL simulation for parts of the keygen datapath.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.95\linewidth]{keccak_sim.png}
+  \caption{Keccak/\texttt{hash\_core\_Server}: \texttt{keccak\_squeeze} enables the squeeze phase; \texttt{keccak\_dout} streams 32-bit words while \texttt{keccak\_ready} pulses; \texttt{ififo\_din} shows absorb-side activity.}
+  \label{fig:keccak-sim}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.95\linewidth]{polmul_sim.png}
+  \caption{Polynomial multiply (\texttt{mat\_vec\_mul} / PE): \texttt{state} FSM progression, \texttt{din}/\texttt{dout}, read counter, and filling of \texttt{poly\_buf} and \texttt{row\_acc\_buf} during a multiply--accumulate segment.}
+  \label{fig:polmul-sim}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.95\linewidth]{trng_sim.png}
+  \caption{TRNG seed collection in \texttt{topserver}: \texttt{trng\_en} gates sampling; \texttt{trng\_valid} strobes per byte; \texttt{seed\_a\_reg}, \texttt{sigma\_reg}, and \texttt{z\_reg} latch the 256-bit seeds over time.}
+  \label{fig:trng-sim}
+\end{figure}
+
+\newpage
+{\noindent\large\textbf{CENG3430 Final Project} \hfill Wong Cheuk Yin 1155192671 \hfill \today}
+\vspace{0.5em}
+\hrule
+\vspace{0.5em}
+\subsection{Overall dataflow}
+\begin{enumerate}[label=\arabic*.]
+  \item Init
+  \item Phase~1: generate seeds
+    \begin{enumerate}[label*=\arabic{enumi}.\arabic*]
+      \item Initialise neoTRNG
+      \item Collect random seeds into $\rho$, $\sigma$, $z$
+    \end{enumerate}
+  \item Generate polynomials / matrix
+    \begin{enumerate}[label*=\arabic{enumi}.\arabic*]
+      \item \texttt{a\_gen}: For each element $A[i][j]$, SHAKE128$(\rho \,\|\, j \,\|\, i)$ to generate the coefficient.
+      \item \texttt{se\_gen}: noise vectors (LFSR demo; not the official method---official CBD/PRF was too LUT-heavy)
+    \end{enumerate}
+  \item Computation of $t$
+    \begin{enumerate}[label*=\arabic{enumi}.\arabic*]
+      \item Compute $\mathbf{A}\mathbf{s}$ (mod 3329)
+      \item Add $\mathbf{e}$ (mod 3329)
+    \end{enumerate}
+  \item Packaging
+    \begin{enumerate}[label*=\arabic{enumi}.\arabic*]
+      \item Form \texttt{pk}
+      \item SHA3-256(\texttt{pk})
+      \item Form \texttt{sk}
+    \end{enumerate}
+\end{enumerate}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fsm.jpg}
+  \caption{brief overview of the FSMs of the system. (hand-drawn)}
+  \label{fig:dataflow}
+\end{figure}
+
+\newpage
+{\noindent\large\textbf{CENG3430 Final Project} \hfill Wong Cheuk Yin 1155192671 \hfill \today}
+\vspace{0.5em}
+\hrule
+\vspace{0.5em}
+\section{Implementation}
+\subsection{Module descriptions}
+
+\subsubsection{\texttt{a\_gen} FSM}
+Fills the flattened matrix memory $A$: nine polynomials each $n{=}256$ coefficients in range [0, 3328], one matrix cell at a time.
+
+\noindent For each cell it uses the shared \texttt{hash\_unit} in uniform-A mode with seed $\rho$ and indices row/column of the current cell.
+
+\begin{itemize}[nosep]
+  \item \textbf{\texttt{ST\_IDLE}:} detects \texttt{a\_gen\_start} pulse, reset row/column/cell counters, pulse \texttt{hash\_start\_o}, go to \texttt{ST\_SAMPLE}.
+  \item \textbf{\texttt{ST\_SAMPLE}:} While \texttt{hash\_stream\_valid\_i}, take two 12-bit candidates per 32-bit word; \emph{reject} values $\geq 3329$; accepted samples fill a per-cell buffer \texttt{a\_poly[0..255]} until 256 coefficients are collected, then assert \texttt{hash\_stop\_stream\_o} and move to \texttt{ST\_WAIT\_HASH\_DONE}.
+  \item \textbf{\texttt{ST\_WAIT\_HASH\_DONE}:} Wait for \texttt{hash\_done\_i}; clear stop, then go to \texttt{ST\_STORE\_POLY}.
+  \item \textbf{\texttt{ST\_STORE\_POLY}:} Copy \texttt{a\_poly} into \texttt{A\_mem} at the address base for the current cell, one coefficient per cycle.
+        If all nine cells are done go to \texttt{ST\_DONE}; else advance \texttt{cell\_ctr} (and row/column), restart \texttt{hash\_start\_o}, return to \texttt{ST\_SAMPLE}.
+  \item \textbf{\texttt{ST\_DONE}:} Pulse \texttt{a\_gen\_done}, deassert \texttt{busy}, return to \texttt{ST\_IDLE}.
+\end{itemize}
+
+\medskip
+\noindent Note: $A$ is a large memory, we cannot directly output the whole matrix at once because it consumes many output ports (bad for routing). So we use a read address to read single 12-bit coefficient at a time. This is why we have the \texttt{a\_mem\_rd\_addr} and \texttt{a\_mem\_rd\_data} ports.
+
+\medskip
+\subsubsection{\texttt{se\_gen} FSM}                          
+States: \textbf{\texttt{ST\_IDLE}} $\rightarrow$ \textbf{\texttt{ST\_FILL}} $\rightarrow$ \textbf{\texttt{ST\_DONE}} $\rightarrow$ \textbf{\texttt{ST\_IDLE}}
+
+\medskip
+\noindent In the official Kyber flow, the small noise vectors $\mathbf{s}$ and $\mathbf{e}$ are drawn using a \emph{pseudorandom function} (PRF) built from an XOF on the secret seed $\sigma$ (with a nonce per polynomial) and then \emph{centered binomial sampling} (CBD) to map pseudorandom bits to coefficients in $\{-2,\ldots,2\}$.
+Implementing that PRF+CBD path in RTL consumed too many LUTs for our target device, so \texttt{se\_gen} uses an \textbf{LFSR-based filler} (using $\sigma$ as seed) instead for demonstration; this is \emph{not} algorithm-compliant noise. 
+
+\medskip
+\noindent Same as \texttt{a\_gen}, we uses read address to read single 12-bit coefficient at a time. But we have a extra input to choose s-gen mode or e-gen mode to generate/read the noise vector.
+
+\subsubsection{\texttt{hash\_unit} FSM}
+States: \textbf{\texttt{ST\_IDLE}} $\rightarrow$ \textbf{\texttt{ST\_INIT\_WAIT}} $\rightarrow$ \textbf{\texttt{ST\_ABSORB}} $\rightarrow$ \textbf{\texttt{ST\_WAIT\_READY}} $\rightarrow$ \textbf{\texttt{ST\_STREAM}} $\rightarrow$ \textbf{\texttt{ST\_DONE}} $\rightarrow$ \textbf{\texttt{ST\_IDLE}}
+
+\medskip
+\noindent Wraps the \texttt{hash\_core\_Server} to enable sharing of the same core different modules. Different modes are used to distinguish the different uses of the hash unit.
+
+\newpage
+{\noindent\large\textbf{CENG3430 Final Project} \hfill Wong Cheuk Yin 1155192671 \hfill \today}
+\vspace{0.5em}
+\hrule
+\vspace{0.5em}
+\subsubsection{\texttt{mat\_vec\_mul} FSM}
+States: \textbf{\texttt{ST\_IDLE}} $\rightarrow$ \textbf{\texttt{ST\_SETADDR}} $\rightarrow$ \textbf{\texttt{ST\_LOAD\_A\_PULSE}} $\rightarrow$ \textbf{\texttt{ST\_LOAD\_A\_STREAM}} $\rightarrow$ \textbf{\texttt{ST\_LOAD\_B\_PULSE}} $\rightarrow$ \textbf{\texttt{ST\_LOAD\_B\_STREAM}} $\rightarrow$ \textbf{\texttt{ST\_FNTT\_A\_*}} $\rightarrow$ \textbf{\texttt{ST\_FNTT\_B\_*}} $\rightarrow$ \textbf{\texttt{ST\_PWM2\_*}} $\rightarrow$ \textbf{\texttt{ST\_INTT\_*}} $\rightarrow$ \textbf{\texttt{ST\_READ\_PRE}} $\rightarrow$ \textbf{\texttt{ST\_READ\_A\_*}} $\rightarrow$ \textbf{\texttt{ST\_READ\_STREAM}} $\rightarrow$ \textbf{\texttt{ST\_ACC\_ROW}} $\rightarrow$ \textbf{\texttt{ST\_WRITE}} $\rightarrow$ \textbf{\texttt{ST\_NEXT}} $\rightarrow$ \textbf{\texttt{ST\_DONE}} $\rightarrow$ \textbf{\texttt{ST\_IDLE}}
+
+\medskip
+\noindent Computes $\mathbf{y} = \mathbf{A} \cdot \mathbf{s}$ with the use of kyber-polmul-hw/pe1 module. The FSM follows the standard procedure to drive the core and do accumulation for each cell in the product vector.
+
+\medskip
+\noindent Pulse \texttt{start} to trigger one triple loop (for one cell in the product vector, 3 cells in total in the product vector). Matrix/vector coefficients are streamed one at a time; results go out on \texttt{out\_wr\_data} with the use of address.
+
+\subsubsection{\texttt{bram\_sdp\_12x768}}
+Simple dual-port synchronous template (one write port, one read port; read data registered, so \textbf{one-cycle read latency}). Instantiated as \texttt{u\_t\_mem} in \texttt{topserver} to hold the 768 coefficients of $t$ (12-bit words). The \texttt{(* ram\_style = "block" *)} attribute and regular read/write pattern steer Vivado to map \texttt{mem} to \textbf{Block RAM}, avoiding a large register/LUT implementation.
+
+\subsubsection{\texttt{topserver} (orchestrator)}
+Single large FSM; shares one \texttt{hash\_unit} with \texttt{a\_gen} via mux. Representative state sequence:
+\texttt{ST\_IDLE} $\rightarrow$ \texttt{ST\_TRNG\_INIT}/\texttt{COLLECT} $\rightarrow$ \texttt{ST\_WAIT\_A\_GEN} $\rightarrow$ \texttt{ST\_WAIT\_S\_GEN} $\rightarrow$ \texttt{ST\_WAIT\_E\_GEN} $\rightarrow$ \texttt{ST\_COMPUTE\_AS}/\texttt{WAIT\_AS\_DONE} $\rightarrow$ \texttt{ST\_ADD\_E} $\rightarrow$ build PK $\rightarrow$ hash PK $\rightarrow$ build SK (pack $s$, copy $H(\mathrm{pk})$, $z$) $\rightarrow$ \texttt{ST\_DONE} $\rightarrow$ \texttt{ST\_IDLE}.
+
+\subsubsection{\texttt{topserver\_axi}}
+AXI4-Lite slave: maps PS accesses to \texttt{CONTROL}, \texttt{STATUS}, \texttt{READ\_CFG}, \texttt{READ\_ADDR}, \texttt{READ\_DATA}; instantiates \texttt{topserver} with reset derived from \texttt{s\_axi\_aresetn}.
+
+\subsection{Block Design}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{block_design.png}
+  \caption{Vivado IP integrator block design: Zynq7 PS \texttt{M\_AXI\_GP0} through \texttt{axi\_smc} to custom \texttt{topserver\_axi\_0}; \texttt{FCLK\_CLK0} and \texttt{Processor System Reset} (\texttt{rst\_ps7\_0\_50M}) supply clock and synchronized resets to the interconnect and PL peripheral.}
+  \label{fig:block-design}
+\end{figure}
+
+\newpage
+{\noindent\large\textbf{CENG3430 Final Project} \hfill Wong Cheuk Yin 1155192671 \hfill \today}
+\vspace{0.5em}
+\hrule
+\vspace{0.5em}
+\subsection{PYNQ script}
+The board-side test flow lives in \texttt{pynq\_script.py}. The script loads the Vivado \texttt{.bit} with PYNQ \texttt{Overlay}, opens an \texttt{MMIO} window at the \texttt{topserver\_axi} base address, and drives the AXI-Lite registers defined in \texttt{topserver\_axi.v}: it clears the sticky done flag, issues a one-shot \texttt{CONTROL} start pulse, then polls \texttt{STATUS} until keygen completes. After that it performs byte-by-byte reads by writing \texttt{READ\_ADDR}, asserting \texttt{READ\_CFG} (\texttt{rd\_en} plus \texttt{rd\_sk} to choose SK vs.\ PK), waiting for \texttt{rd\_valid} in \texttt{STATUS}, and latching the low byte from \texttt{READ\_DATA}. The full 2400-byte SK and 1184-byte PK buffers are assembled in Python and printed as hex dumps for quick verification on PYNQ.
+\section{Results and Discussion}
+
+\subsection{Preset goals}
+The original full three-server goal was not met; keygen only was delivered in hardware, with demo noise and resource-driven trade-offs.
+
+\subsection{Difficulties and bottlenecks}
+
+\subsubsection{LUT over-utilisation.}
+The ZedBoard offers about 53k LUTs; operating too close to the limit worsens routing and runtime (e.g.\ $\sim$50k LUTs leading to multi-hour implementation and poor slack).
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.6\linewidth]{impl.png}
+  \caption{Implementated design of the system. Very full.}
+  \label{Implementated design of the system}
+\end{figure}
+
+\newpage
+{\noindent\large\textbf{CENG3430 Final Project} \hfill Wong Cheuk Yin 1155192671 \hfill \today}
+\vspace{0.5em}
+\hrule
+\vspace{0.5em}
+\medskip
+\noindent \textbf{1. \texttt{se\_gen} / noise generation.}
+
+\noindent Official Kyber-style sampling (CBD/PRF path) consumed very large LUT in this flow (about 38k LUT in my case). An LFSR-based filler reduced \texttt{se\_gen} to about \textbf{86 LUTs} in the final routed build (with two RAMB18s for storage), at the cost of non-standard keys.
+
+\medskip
+\noindent \textbf{2. Polynomial multiplication.}
+
+\noindent A 16-PE pipeline from open-source Kyber polynomial-multiplier hardware pushed utilisation to roughly 100k LUTs (infeasible). The design was reduced to a \textbf{single-PE} pipeline to fit the device.
+
+\medskip
+\noindent \textbf{3. Shared hash core.}
+
+\noindent Multiple Kyber steps need hashing; duplicating the hash server per consumer would multiply LUT. A \textbf{shared} \texttt{hash\_unit} with mode muxing serialises hash operations (no parallel hash).
+
+\medskip
+\noindent \textbf{4. Large arrays.}
+
+\noindent $\mathbf{A}$, $\mathbf{s}$, $\mathbf{e}$, $H(\mathrm{pk})$, \texttt{sk}, etc.\ are stored in \textbf{BRAM} inside modules with explicit read ports (12-bit read granularity $\Rightarrow$ software or FSM loops for full byte streams).
+
+\medskip
+\noindent \textbf{5. Routing congestion.}
+
+\noindent With LUT resources highly utilized, the latency (WNS/TNS) of the system is not acceptable because of the routing congestion. To solve this issue, the frequency of the system is reduced from 100MHz to 50MHz to reduce the routing difficulty. 
+In my case, the system with 50k/53k LUT usage 100MHz frequency runs implementation for 3 hours and get -2000ns TNS. but after switching to 50MHz, the implementation time is shortened to 1 hour and get positive TNS.
+
+\subsubsection{MMIO / optimisation datapath.}
+After optimisation, the AXI read path into \texttt{se\_gen} appeared to collapse in the netlist, which is caused by the collapse of the AXI read path and overlay fails to read the data properly. Applying
+\begin{verbatim}
+(* keep_hierarchy = "yes", dont_touch = "yes" *)
+\end{verbatim}
+on \texttt{se\_gen} and its BRAM wrappers preserved the hierarchy and restored correct reads.
+
+\subsection{Further improvements}
+Finer modularisation (as in stronger reference projects), deeper algorithm/architecture planning, and a longer project cycle would improve completeness. Splitting into more packaged IP with clearer PS/PL boundaries would ease debug and maintenance; pushing more control to the PS can reduce PL congestion.
+
+\newpage
+{\noindent\large\textbf{CENG3430 Final Project} \hfill Wong Cheuk Yin 1155192671 \hfill \today}
+\vspace{0.5em}
+\hrule
+\vspace{0.5em}
+\section{Declarations}
+
+\subsection{AI tools}
+Cursor Copilot was used to help identifying the cause of some stubborn issues and debugging (partially), as some issues are beyond my knowledge. All testing and verification were done manually.
+
+\subsection{References}
+\begin{enumerate}[label={[\arabic*]}, leftmargin=2.8em, itemsep=0.75em, parsep=0pt]
+  \item S.~Nolting, \textit{neoTRNG} (VHDL): platform-independent true random number generator for FPGA/ASIC, with ring-oscillator entropy and post-processing. Repository: \url{https://github.com/stnolting/neoTRNG}.
+  \item \texttt{@xingyf14}, \textit{CRYSTALS-Kyber-FPGA-Implementation}: Verilog FPGA implementation of Kyber including the Keccak hashing core (\texttt{hash\_core\_Server}) adapted in this project. Repository: \url{https://github.com/xingyf14/CRYSTALS-Kyber-FPGA-Implementation}.
+  \item B.~Acmert, \textit{kyber-polmul-hw}: hardware polynomial multiplication and NTT pipeline for Kyber (used via \texttt{KyberHPM1PE\_top} in \texttt{mat\_vec\_mul}). Repository: \url{https://github.com/acmert/kyber-polmul-hw}.
+  \item CRYSTALS consortium, \textit{CRYSTALS-Kyber} / ML-KEM reference implementation and specification sources (algorithm definition, test vectors). Repository: \url{https://github.com/pq-crystals/kyber}.
+\end{enumerate}\end{document}
