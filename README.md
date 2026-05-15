@@ -1,21 +1,16 @@
-### FPGA Accelerated CRYSTALS Kyber768 Cryptographic System (WIP)
+### FPGA Implementation of CRYSTALS-Kyber Key Generation
 
-Course Project for CENG3430 @CUHK, Spring 2026.
+Final Course Project for CENG3430 @CUHK, Spring 2026.
 
 ### Source attribution
 
+The following **imported (vendored) third-party sources** are included in this repository:
 
+- **`hash-server/`** — Keccak sponge / `hash_core_Server` and related RTL (from the hashing core in [xingyf14/CRYSTALS-Kyber-FPGA-Implementation](https://github.com/xingyf14/CRYSTALS-Kyber-FPGA-Implementation), kept under this directory).
+- **`kyber-polmul-hw/`** — Kyber polynomial multiplication / NTT hardware from [acmert/kyber-polmul-hw](https://github.com/acmert/kyber-polmul-hw).
+- **`neoTRNG.vhd`** — TRNG macro from [stnolting/neoTRNG](https://github.com/stnolting/neoTRNG) (VHDL file integrated at repo root).
 
-- **Keccak server**: Part of the hashing core (`hash_core_Server.v` and related files) is imported from  
-  [xingyf14](https://github.com/xingyf14).
-- **NTT / polynomial multiplication**: The NTT (number-theoretic transform) and polynomial multiplication hardware used in this project are adapted from:
-  - **Repository**: `kyber-polmul-hw`
-  - **Author**: acmert
-  - **URL**: https://github.com/acmert/kyber-polmul-hw
-- **TRNG**: The true random number generator integration is based on `neoTRNG` by **Stephan Nolting (stnolting)**.
-  - **Repository**: `neoTRNG`
-  - **Author**: stnolting
-  - **URL**: https://github.com/stnolting/neoTRNG
+All **other** RTL and scripts (e.g.\ `topserver.v`, `topserver_axi.v`, `a_gen.v`, `se_gen.v`, `mat_vec_mul.v`, `hash_unit.v`, `bram_sdp_12x768.v`, `pynq_script.py`, report sources, etc.) are **original work** for this course project unless a file header states otherwise.
 
 ### Academic use only
 
